@@ -3,6 +3,7 @@ import {
   NotFoundException,
   Logger,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StellarService } from '../../common/stellar/stellar.service';
@@ -36,6 +37,16 @@ export class ShipmentsService {
       throw new ConflictException(`Shipment ${dto.shipmentId} already exists`);
     }
 
+    // Check for duplicate referenceNumber if provided
+    if (dto.referenceNumber) {
+      const withRef = await this.prisma.shipment.findUnique({
+        where: { referenceNumber: dto.referenceNumber },
+      });
+      if (withRef) {
+        throw new ConflictException(`Shipment with referenceNumber "${dto.referenceNumber}" already exists`);
+      }
+    }
+
     const shipment = await this.prisma.shipment.create({
       data: {
         id: dto.shipmentId,
@@ -46,6 +57,10 @@ export class ShipmentsService {
         tokenAddress: dto.tokenAddress,
         totalAmount: BigInt(dto.totalAmount),
         txHash: dto.txHash,
+        description: dto.description,
+        referenceNumber: dto.referenceNumber,
+        metadata: dto.metadata,
+        tags: dto.tags ?? [],
         milestones: {
           create: dto.milestones.map((m, index) => ({
             milestoneIndex: index,
@@ -70,15 +85,21 @@ export class ShipmentsService {
     buyerAddress?: string;
     supplierAddress?: string;
     status?: ShipmentStatus;
+    referenceNumber?: string;
+    tags?: string[];
     page?: number;
     limit?: number;
   }) {
-    const { buyerAddress, supplierAddress, status, page = 1, limit = 20 } = filters;
+    const { buyerAddress, supplierAddress, status, referenceNumber, tags, page = 1, limit = 20 } = filters;
 
     const where: any = {};
     if (buyerAddress) where.buyerAddress = buyerAddress;
     if (supplierAddress) where.supplierAddress = supplierAddress;
     if (status) where.status = status;
+    if (referenceNumber) where.referenceNumber = referenceNumber;
+    if (tags && tags.length > 0) {
+      where.tags = { hasSome: tags };
+    }
 
     const [shipments, total] = await this.prisma.$transaction([
       this.prisma.shipment.findMany({
@@ -107,6 +128,55 @@ export class ShipmentsService {
     });
     if (!shipment) throw new NotFoundException(`Shipment ${id} not found`);
     return this.serialize(shipment);
+  }
+
+  /**
+   * Update shipment metadata (description, referenceNumber, metadata, tags).
+   * Only the buyer can update a shipment.
+   * Financial fields and addresses are immutable and ignored if provided.
+   */
+  async update(id: string, buyerAddress: string, dto: any) {
+    const shipment = await this.prisma.shipment.findUnique({
+      where: { id },
+    });
+
+    if (!shipment) {
+      throw new NotFoundException(`Shipment ${id} not found`);
+    }
+
+    // Verify buyer is the one making the update
+    if (shipment.buyerAddress !== buyerAddress) {
+      throw new ForbiddenException('Only the shipment buyer can update it');
+    }
+
+    // Check for duplicate referenceNumber if being updated
+    if (dto.referenceNumber && dto.referenceNumber !== shipment.referenceNumber) {
+      const withRef = await this.prisma.shipment.findUnique({
+        where: { referenceNumber: dto.referenceNumber },
+      });
+      if (withRef) {
+        throw new ConflictException(`Shipment with referenceNumber "${dto.referenceNumber}" already exists`);
+      }
+    }
+
+    // Only allow updating descriptive fields (financial/address fields ignored)
+    const updateData: any = {};
+    if (dto.description !== undefined) updateData.description = dto.description;
+    if (dto.referenceNumber !== undefined) updateData.referenceNumber = dto.referenceNumber;
+    if (dto.metadata !== undefined) updateData.metadata = dto.metadata;
+    if (dto.tags !== undefined) updateData.tags = dto.tags;
+
+    const updated = await this.prisma.shipment.update({
+      where: { id },
+      data: updateData,
+      include: {
+        milestones: { orderBy: { milestoneIndex: 'asc' } },
+        events: { orderBy: { ledger: 'desc' }, take: 20 },
+      },
+    });
+
+    this.logger.log(`Shipment updated: ${id}`);
+    return this.serialize(updated);
   }
 
   // ----------------------------------------------------------

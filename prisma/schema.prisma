@@ -90,6 +90,13 @@ model Shipment {
   status           ShipmentStatus  @default(ACTIVE)
   txHash           String?         // ledger tx hash of creation
   createdLedger    Int?            // ledger sequence at creation
+
+  // Human-readable context fields
+  description      String?         // what goods are being shipped (max 1000 chars)
+  referenceNumber  String?         @unique // contract/PO reference for external systems
+  metadata         Json?           // arbitrary key-value pairs (incoterms, port, etc)
+  tags             String[]        @default([]) // searchable tags
+
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 
