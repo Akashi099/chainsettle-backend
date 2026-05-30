@@ -7,7 +7,8 @@ import {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StellarService } from '../../common/stellar/stellar.service';
 import { CreateShipmentDto } from './dto/create-shipment.dto';
-import { ShipmentStatus } from '@prisma/client';
+import { ShipmentStatus, UserRole } from '@prisma/client';
+
 
 @Injectable()
 export class ShipmentsService {
@@ -16,7 +17,7 @@ export class ShipmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stellar: StellarService,
-  ) {}
+  ) { }
 
   // ----------------------------------------------------------
   // CREATE — persist after tx is confirmed on-chain
@@ -70,13 +71,37 @@ export class ShipmentsService {
     status?: ShipmentStatus;
     page?: number;
     limit?: number;
+    callerStellarAddress?: string;
+    isAdmin?: boolean;
   }) {
-    const { buyerAddress, supplierAddress, status, page = 1, limit = 20 } = filters;
+    const {
+      buyerAddress,
+      supplierAddress,
+      status,
+      page = 1,
+      limit = 20,
+      callerStellarAddress,
+      isAdmin = false,
+    } = filters;
 
     const where: any = {};
+
     if (buyerAddress) where.buyerAddress = buyerAddress;
     if (supplierAddress) where.supplierAddress = supplierAddress;
     if (status) where.status = status;
+
+    // Scope to shipments where the caller is a participant (buyer/supplier/logistics/arbiter)
+    if (!isAdmin && callerStellarAddress) {
+      where.AND = where.AND ?? [];
+      where.AND.push({
+        OR: [
+          { buyerAddress: callerStellarAddress },
+          { supplierAddress: callerStellarAddress },
+          { logisticsAddress: callerStellarAddress },
+          { arbiterAddress: callerStellarAddress },
+        ],
+      });
+    }
 
     const [shipments, total] = await this.prisma.$transaction([
       this.prisma.shipment.findMany({
@@ -94,6 +119,7 @@ export class ShipmentsService {
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
+
 
   async findOne(id: string) {
     const shipment = await this.prisma.shipment.findUnique({
