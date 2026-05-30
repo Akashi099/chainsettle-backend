@@ -67,6 +67,7 @@ model User {
   logisticsShipments Shipment[]     @relation("LogisticsShipments")
   arbiterShipments   Shipment[]     @relation("ArbiterShipments")
   notifications      Notification[]
+  auditLogs          AuditLog[]     @relation("AuditLogs")
 
   @@map("users")
 }
@@ -162,4 +163,27 @@ model Notification {
   @@index([userId])
   @@index([read])
   @@map("notifications")
+}
+
+model AuditLog {
+  id             String   @id @default(uuid())
+  actorId        String?  // FK to User; null for system-initiated actions
+  actorAddress   String   // Stellar address for quick filtering
+  action         String   // e.g. 'shipment.sync', 'milestone.update'
+  resourceType   String   // e.g. 'Shipment', 'Milestone'
+  resourceId     String   // ID of the resource affected
+  metadata       Json?    // extra context (old values, new values, etc.)
+  ipAddress      String?  // IP address of the request
+  createdAt      DateTime @default(now())
+
+  // Relations
+  actor User? @relation("AuditLogs", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId])
+  @@index([actorAddress])
+  @@index([action])
+  @@index([resourceType])
+  @@index([resourceId])
+  @@index([createdAt])
+  @@map("audit_logs")
 }
