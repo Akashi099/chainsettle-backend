@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StellarService } from '../../common/stellar/stellar.service';
+import { TokenRegistryService } from '../../common/token-registry/token-registry.service';
 import { CreateShipmentDto } from './dto/create-shipment.dto';
 import { ShipmentStatus } from '@prisma/client';
 import { nativeToScVal } from '@stellar/stellar-sdk';
@@ -18,6 +19,7 @@ export class ShipmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stellar: StellarService,
+    private readonly tokenRegistry: TokenRegistryService,
   ) {}
 
   // ----------------------------------------------------------
@@ -47,6 +49,8 @@ export class ShipmentsService {
       }
     }
 
+    const token = this.tokenRegistry.getToken(dto.tokenAddress);
+
     const shipment = await this.prisma.shipment.create({
       data: {
         id: dto.shipmentId,
@@ -55,6 +59,8 @@ export class ShipmentsService {
         logisticsAddress: dto.logisticsAddress,
         arbiterAddress: dto.arbiterAddress,
         tokenAddress: dto.tokenAddress,
+        tokenDecimals: token.decimals,
+        tokenSymbol: token.symbol,
         totalAmount: BigInt(dto.totalAmount),
         txHash: dto.txHash,
         description: dto.description,
@@ -113,7 +119,7 @@ export class ShipmentsService {
     ]);
 
     return {
-      data: shipments.map(this.serialize),
+      data: shipments.map((s) => this.serialize(s)),
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
@@ -255,16 +261,24 @@ export class ShipmentsService {
 
   private serialize(shipment: any) {
     const now = new Date();
+    const decimals: number = shipment.tokenDecimals ?? 7;
+    const symbol: string = shipment.tokenSymbol ?? 'USDC';
+
     return {
       ...shipment,
+      tokenSymbol: symbol,
+      tokenDecimals: decimals,
+      // Raw values kept for backward compatibility
       totalAmount: shipment.totalAmount?.toString(),
       releasedAmount: shipment.releasedAmount?.toString(),
+      // Human-readable display values
+      totalAmountFormatted: this.stellar.toHumanAmount(shipment.totalAmount ?? 0n, decimals),
+      releasedAmountFormatted: this.stellar.toHumanAmount(shipment.releasedAmount ?? 0n, decimals),
       milestones: shipment.milestones?.map((m: any) => {
-        // A milestone is overdue if: dueAt < now AND status is not CONFIRMED or RESOLVED
         const isOverdue =
-          m.dueAt && 
-          m.dueAt < now && 
-          m.status !== 'CONFIRMED' && 
+          m.dueAt &&
+          m.dueAt < now &&
+          m.status !== 'CONFIRMED' &&
           m.status !== 'RESOLVED';
 
         return {

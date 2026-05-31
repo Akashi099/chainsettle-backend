@@ -9,6 +9,7 @@ import { PrismaModule } from './common/prisma/prisma.module';
 import { StellarModule } from './common/stellar/stellar.module';
 import { RedisModule } from './common/redis/redis.module';
 import { IpfsModule } from './common/ipfs/ipfs.module';
+import { TokenRegistryModule } from './common/token-registry/token-registry.module';
 import { RedisThrottlerStorageService } from './common/throttler/redis-throttler-storage.service';
 
 import { AuthModule } from './modules/auth/auth.module';
@@ -53,6 +54,7 @@ import { HealthModule } from './modules/health/health.module';
     StellarModule,
     RedisModule,
     IpfsModule,
+    TokenRegistryModule,
 
     // Feature modules
     AuthModule,

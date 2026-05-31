@@ -161,27 +161,40 @@ export class StellarService implements OnModuleInit {
   // ----------------------------------------------------------
 
   /**
-   * Converts a USDC amount in stroops (i128 integer) to a human-readable
-   * decimal string. USDC on Stellar has 7 decimal places.
+   * Converts a token amount from its smallest on-chain unit to a human-readable
+   * decimal string using the given decimal precision.
    *
-   * @example stroopsToUsdc(10_000_000n) → "1.0000000"
+   * @example toHumanAmount(10_000_000n, 7) → "1.0000000"  (USDC/EURC — 7 dp)
+   * @example toHumanAmount(1_000_000n,  6) → "1.000000"   (6-decimal token)
    */
-  stroopsToUsdc(stroops: bigint | string): string {
-    const value = BigInt(stroops);
-    const whole = value / 10_000_000n;
-    const fraction = (value % 10_000_000n).toString().padStart(7, '0');
+  toHumanAmount(amount: bigint | string, decimals = 7): string {
+    const value = BigInt(amount);
+    const divisor = BigInt(10 ** decimals);
+    const whole = value / divisor;
+    const fraction = (value % divisor).toString().padStart(decimals, '0');
     return `${whole}.${fraction}`;
   }
 
   /**
-   * Converts a human-readable USDC amount to stroops (i128 bigint).
+   * Converts a human-readable token amount to its smallest on-chain unit.
    *
-   * @example usdcToStroops("1.5") → 15_000_000n
+   * @example toBaseUnit("1.5", 7) → 15_000_000n
+   * @example toBaseUnit("1.5", 6) →  1_500_000n
    */
+  toBaseUnit(amount: string, decimals = 7): bigint {
+    const [whole, fraction = ''] = amount.split('.');
+    const paddedFraction = fraction.padEnd(decimals, '0').slice(0, decimals);
+    return BigInt(whole) * BigInt(10 ** decimals) + BigInt(paddedFraction);
+  }
+
+  /** @deprecated Use toHumanAmount(amount, 7) */
+  stroopsToUsdc(stroops: bigint | string): string {
+    return this.toHumanAmount(stroops, 7);
+  }
+
+  /** @deprecated Use toBaseUnit(amount, 7) */
   usdcToStroops(usdc: string): bigint {
-    const [whole, fraction = ''] = usdc.split('.');
-    const paddedFraction = fraction.padEnd(7, '0').slice(0, 7);
-    return BigInt(whole) * 10_000_000n + BigInt(paddedFraction);
+    return this.toBaseUnit(usdc, 7);
   }
 
   /**
