@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   Query,
@@ -19,7 +20,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { ShipmentsService } from './shipments.service';
-import { CreateShipmentDto } from './dto/create-shipment.dto';
+import { CreateShipmentDto, UpdateShipmentDto } from './dto/create-shipment.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ShipmentParticipantGuard } from './guards/shipment-participant.guard';
@@ -63,6 +64,8 @@ export class ShipmentsController {
   @ApiQuery({ name: 'buyerAddress', required: false })
   @ApiQuery({ name: 'supplierAddress', required: false })
   @ApiQuery({ name: 'status', required: false, enum: ShipmentStatus })
+  @ApiQuery({ name: 'referenceNumber', required: false })
+  @ApiQuery({ name: 'tags', required: false, description: 'Comma-separated tags' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   findAll(
@@ -70,6 +73,8 @@ export class ShipmentsController {
     @Query('buyerAddress') buyerAddress?: string,
     @Query('supplierAddress') supplierAddress?: string,
     @Query('status') status?: ShipmentStatus,
+    @Query('referenceNumber') referenceNumber?: string,
+    @Query('tags') tagsQuery?: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
@@ -81,6 +86,8 @@ export class ShipmentsController {
       buyerAddress: isAdmin ? buyerAddress : undefined,
       supplierAddress: isAdmin ? supplierAddress : undefined,
       status,
+      referenceNumber,
+      tags,
       page,
       limit,
       callerStellarAddress: user?.stellarAddress,
@@ -103,6 +110,21 @@ export class ShipmentsController {
     return this.shipmentsService.findOne(id);
   }
 
+
+  /**
+   * PATCH /api/v1/shipments/:id
+   * Update shipment metadata (description, referenceNumber, metadata, tags).
+   * Only the buyer can update. Financial fields are immutable.
+   */
+  @Patch(':id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update shipment metadata (description, reference, metadata, tags)' })
+  @ApiResponse({ status: 200, description: 'Shipment updated successfully' })
+  @ApiResponse({ status: 403, description: 'Only buyer can update' })
+  @ApiResponse({ status: 409, description: 'Reference number already in use' })
+  update(@Param('id') id: string, @Body() dto: UpdateShipmentDto, @CurrentUser() user: any) {
+    return this.shipmentsService.update(id, user.stellarAddress, dto);
+  }
 
   /**
    * POST /api/v1/shipments/:id/sync
