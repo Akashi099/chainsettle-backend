@@ -2,7 +2,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ShipmentsService } from './shipments.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StellarService } from '../../common/stellar/stellar.service';
+import { TokenRegistryService } from '../../common/token-registry/token-registry.service';
 import { ConflictException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { ShipmentStatus } from '@prisma/client';
+import { nativeToScVal } from '@stellar/stellar-sdk';
 
 const mockPrisma = {
   shipment: {
@@ -18,6 +21,11 @@ const mockPrisma = {
 const mockStellar = {
   simulateContractCall: jest.fn(),
   stroopsToUsdc: jest.fn().mockReturnValue('100.0000000'),
+  toHumanAmount: jest.fn().mockReturnValue('100.0000000'),
+};
+
+const mockTokenRegistry = {
+  getToken: jest.fn().mockReturnValue({ symbol: 'USDC', decimals: 7 }),
 };
 
 describe('ShipmentsService', () => {
@@ -29,6 +37,7 @@ describe('ShipmentsService', () => {
         ShipmentsService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: StellarService, useValue: mockStellar },
+        { provide: TokenRegistryService, useValue: mockTokenRegistry },
       ],
     }).compile();
 
@@ -244,7 +253,10 @@ describe('ShipmentsService', () => {
     });
 
     it('allows updating referenceNumber', async () => {
-      mockPrisma.shipment.findUnique.mockResolvedValue(mockShipment);
+      // First call: find shipment by id; second call: check for duplicate ref (none found)
+      mockPrisma.shipment.findUnique
+        .mockResolvedValueOnce(mockShipment)
+        .mockResolvedValueOnce(null);
       mockPrisma.shipment.update.mockResolvedValue({
         ...mockShipment,
         referenceNumber: 'PO-2026-001',
@@ -252,7 +264,7 @@ describe('ShipmentsService', () => {
         events: [],
       });
 
-      const result = await service.update('SHIP-001', 'GABC', {
+      await service.update('SHIP-001', 'GABC', {
         referenceNumber: 'PO-2026-001',
       });
 
@@ -313,6 +325,9 @@ describe('ShipmentsService', () => {
           }),
         }),
       );
+    });
+  });
+
   describe('syncStatusFromChain()', () => {
     const shipmentId = 'SHIP-001';
 

@@ -39,6 +39,14 @@ enum NotificationType {
   SHIPMENT_CANCELLED
   PAYMENT_RELEASED
   MILESTONE_OVERDUE
+  COMMENT_ADDED
+  SYSTEM_ALERT
+}
+
+enum CommentVisibility {
+  ALL
+  BUYER_SUPPLIER
+  INTERNAL
 }
 
 enum DisputeRole {
@@ -77,6 +85,7 @@ model User {
   notifications      Notification[]
   auditLogs          AuditLog[]     @relation("AuditLogs")
   disputeEvidence    DisputeEvidence[]
+  comments           ShipmentComment[]
 
   @@map("users")
 }
@@ -94,6 +103,10 @@ model Shipment {
   txHash           String?         // ledger tx hash of creation
   createdLedger    Int?            // ledger sequence at creation
 
+  // Token metadata (populated from TokenRegistry at creation time)
+  tokenDecimals    Int     @default(7)
+  tokenSymbol      String  @default("USDC")
+
   // Human-readable context fields
   description      String?         // what goods are being shipped (max 1000 chars)
   referenceNumber  String?         @unique // contract/PO reference for external systems
@@ -110,6 +123,7 @@ model Shipment {
   arbiter   User        @relation("ArbiterShipments", fields: [arbiterAddress], references: [stellarAddress])
   milestones Milestone[]
   events    ChainEvent[]
+  comments  ShipmentComment[]
 
   @@map("shipments")
 }
@@ -171,9 +185,11 @@ model ChainEvent {
   // Relations
   shipment Shipment? @relation(fields: [shipmentId], references: [id])
 
+  @@unique([txHash, eventName])
   @@index([shipmentId])
   @@index([eventName])
   @@index([processed])
+  @@index([ledger])
   @@map("chain_events")
 }
 
@@ -196,25 +212,38 @@ model Notification {
   @@map("notifications")
 }
 
-model AuditLog {
-  id             String   @id @default(uuid())
-  actorId        String?  // FK to User; null for system-initiated actions
-  actorAddress   String   // Stellar address for quick filtering
-  action         String   // e.g. 'shipment.sync', 'milestone.update'
-  resourceType   String   // e.g. 'Shipment', 'Milestone'
-  resourceId     String   // ID of the resource affected
-  metadata       Json?    // extra context (old values, new values, etc.)
-  ipAddress      String?  // IP address of the request
-  createdAt      DateTime @default(now())
+model FailedEvent {
+  id            String    @id @default(uuid())
+  eventName     String
+  ledger        Int
+  txHash        String
+  payload       Json
+  error         String    @db.Text
+  attemptCount  Int       @default(1)
+  lastAttemptAt DateTime  @default(now())
+  resolvedAt    DateTime?
+  createdAt     DateTime  @default(now())
 
-  // Relations
-  actor User? @relation("AuditLogs", fields: [actorId], references: [id], onDelete: SetNull)
+  @@unique([txHash, eventName])
+  @@index([resolvedAt])
+  @@map("failed_events")
+}
 
-  @@index([actorId])
-  @@index([actorAddress])
-  @@index([action])
-  @@index([resourceType])
-  @@index([resourceId])
-  @@index([createdAt])
-  @@map("audit_logs")
+model ShipmentComment {
+  id            String            @id @default(uuid())
+  shipmentId    String
+  authorId      String
+  body          String            @db.VarChar(2000)
+  visibility    CommentVisibility @default(ALL)
+  attachmentCid String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  deletedAt     DateTime?
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  author   User     @relation(fields: [authorId], references: [id])
+
+  @@index([shipmentId])
+  @@index([authorId])
+  @@map("shipment_comments")
 }

@@ -7,9 +7,10 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StellarService } from '../../common/stellar/stellar.service';
+import { TokenRegistryService } from '../../common/token-registry/token-registry.service';
 import { CreateShipmentDto } from './dto/create-shipment.dto';
-import { ShipmentStatus } from '@prisma/client';
-import { nativeToScVal } from '@stellar/stellar-sdk';
+import { ShipmentStatus, UserRole } from '@prisma/client';
+
 
 @Injectable()
 export class ShipmentsService {
@@ -18,6 +19,7 @@ export class ShipmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stellar: StellarService,
+    private readonly tokenRegistry: TokenRegistryService,
   ) {}
 
   // ----------------------------------------------------------
@@ -47,6 +49,8 @@ export class ShipmentsService {
       }
     }
 
+    const token = this.tokenRegistry.getToken(dto.tokenAddress);
+
     const shipment = await this.prisma.shipment.create({
       data: {
         id: dto.shipmentId,
@@ -55,6 +59,8 @@ export class ShipmentsService {
         logisticsAddress: dto.logisticsAddress,
         arbiterAddress: dto.arbiterAddress,
         tokenAddress: dto.tokenAddress,
+        tokenDecimals: token.decimals,
+        tokenSymbol: token.symbol,
         totalAmount: BigInt(dto.totalAmount),
         txHash: dto.txHash,
         description: dto.description,
@@ -89,16 +95,40 @@ export class ShipmentsService {
     tags?: string[];
     page?: number;
     limit?: number;
+    callerStellarAddress?: string;
+    isAdmin?: boolean;
   }) {
-    const { buyerAddress, supplierAddress, status, referenceNumber, tags, page = 1, limit = 20 } = filters;
+    const {
+      buyerAddress,
+      supplierAddress,
+      status,
+      page = 1,
+      limit = 20,
+      callerStellarAddress,
+      isAdmin = false,
+    } = filters;
 
     const where: any = {};
+
     if (buyerAddress) where.buyerAddress = buyerAddress;
     if (supplierAddress) where.supplierAddress = supplierAddress;
     if (status) where.status = status;
     if (referenceNumber) where.referenceNumber = referenceNumber;
     if (tags && tags.length > 0) {
       where.tags = { hasSome: tags };
+    }
+
+    // Scope to shipments where the caller is a participant (buyer/supplier/logistics/arbiter)
+    if (!isAdmin && callerStellarAddress) {
+      where.AND = where.AND ?? [];
+      where.AND.push({
+        OR: [
+          { buyerAddress: callerStellarAddress },
+          { supplierAddress: callerStellarAddress },
+          { logisticsAddress: callerStellarAddress },
+          { arbiterAddress: callerStellarAddress },
+        ],
+      });
     }
 
     const [shipments, total] = await this.prisma.$transaction([
@@ -113,10 +143,11 @@ export class ShipmentsService {
     ]);
 
     return {
-      data: shipments.map(this.serialize),
+      data: shipments.map((s) => this.serialize(s)),
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
+
 
   async findOne(id: string) {
     const shipment = await this.prisma.shipment.findUnique({
@@ -255,16 +286,24 @@ export class ShipmentsService {
 
   private serialize(shipment: any) {
     const now = new Date();
+    const decimals: number = shipment.tokenDecimals ?? 7;
+    const symbol: string = shipment.tokenSymbol ?? 'USDC';
+
     return {
       ...shipment,
+      tokenSymbol: symbol,
+      tokenDecimals: decimals,
+      // Raw values kept for backward compatibility
       totalAmount: shipment.totalAmount?.toString(),
       releasedAmount: shipment.releasedAmount?.toString(),
+      // Human-readable display values
+      totalAmountFormatted: this.stellar.toHumanAmount(shipment.totalAmount ?? 0n, decimals),
+      releasedAmountFormatted: this.stellar.toHumanAmount(shipment.releasedAmount ?? 0n, decimals),
       milestones: shipment.milestones?.map((m: any) => {
-        // A milestone is overdue if: dueAt < now AND status is not CONFIRMED or RESOLVED
         const isOverdue =
-          m.dueAt && 
-          m.dueAt < now && 
-          m.status !== 'CONFIRMED' && 
+          m.dueAt &&
+          m.dueAt < now &&
+          m.status !== 'CONFIRMED' &&
           m.status !== 'RESOLVED';
 
         return {
