@@ -5,6 +5,16 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { NotificationType } from '@prisma/client';
 import { NotificationsGateway } from './notifications.gateway';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { UpdatePreferencesDto } from './dto/update-preferences.dto';
+
+type PreferenceMap = Record<NotificationType, { inApp: boolean; email: boolean }>;
+
+function buildDefaultPreferences(): PreferenceMap {
+  return Object.values(NotificationType).reduce((acc, type) => {
+    acc[type] = { inApp: true, email: true };
+    return acc;
+  }, {} as PreferenceMap);
+}
 
 @Injectable()
 export class NotificationsService {
@@ -31,6 +41,7 @@ export class NotificationsService {
   /**
    * Creates an in-app notification for a user (by their Stellar address)
    * and optionally sends an email if they have one registered.
+   * Both channels are gated on the user's NotificationPreference record.
    */
   async notifyUser(
     stellarAddress: string,
@@ -49,18 +60,16 @@ export class NotificationsService {
         return;
       }
 
+      const prefs = await this.getOrCreatePreferences(user.id);
+      const { inApp, email: emailEnabled } = prefs[type];
+
+      if (!inApp) return;
+
       const notification = await this.prisma.notification.create({
-        data: {
-          userId: user.id,
-          type,
-          title,
-          message,
-          data: data ?? {},
-        },
+        data: { userId: user.id, type, title, message, data: data ?? {} },
       });
 
-      // Send email if user has one registered
-      if (user.email) {
+      if (emailEnabled && user.email) {
         await this.sendEmail(user.email, title, message);
         await this.prisma.notification.update({
           where: { id: notification.id },
@@ -68,10 +77,8 @@ export class NotificationsService {
         });
       }
 
-      // Push to any connected WebSocket clients for this user
       this.gateway?.pushToUser(user.id, notification);
 
-      // Fan-out to active webhook endpoints subscribed to this event type
       this.webhooks
         ?.dispatch(type, { notificationId: notification.id, ...(data ?? {}) })
         .catch((err) => this.logger.error('Webhook dispatch error', err.message));
@@ -80,6 +87,25 @@ export class NotificationsService {
     } catch (error) {
       this.logger.error(`Failed to notify ${stellarAddress}`, error.message);
     }
+  }
+
+  async getOrCreatePreferences(userId: string): Promise<PreferenceMap> {
+    const record = await this.prisma.notificationPreference.upsert({
+      where: { userId },
+      create: { userId, preferences: buildDefaultPreferences() },
+      update: {},
+    });
+    return record.preferences as PreferenceMap;
+  }
+
+  async updatePreferences(userId: string, dto: UpdatePreferencesDto): Promise<PreferenceMap> {
+    const current = await this.getOrCreatePreferences(userId);
+    const merged = { ...current, ...dto.preferences };
+    const record = await this.prisma.notificationPreference.update({
+      where: { userId },
+      data: { preferences: merged },
+    });
+    return record.preferences as PreferenceMap;
   }
 
   async findForUser(userId: string, unreadOnly = false, page = 1, limit = 20) {
