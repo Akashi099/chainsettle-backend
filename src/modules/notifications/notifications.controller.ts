@@ -1,8 +1,9 @@
-import { Controller, Get, Patch, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Patch, Put, Param, Query, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { UpdatePreferencesDto } from './dto/update-preferences.dto';
 
 @ApiTags('notifications')
 @ApiBearerAuth()
@@ -35,5 +36,17 @@ export class NotificationsController {
   @ApiOperation({ summary: 'Mark all notifications as read' })
   markAllRead(@CurrentUser('id') userId: string) {
     return this.notificationsService.markAllRead(userId);
+  }
+
+  @Get('preferences')
+  @ApiOperation({ summary: 'Get notification preferences for the authenticated user' })
+  getPreferences(@CurrentUser('id') userId: string) {
+    return this.notificationsService.getOrCreatePreferences(userId);
+  }
+
+  @Put('preferences')
+  @ApiOperation({ summary: 'Update notification preferences (partial merge)' })
+  updatePreferences(@CurrentUser('id') userId: string, @Body() dto: UpdatePreferencesDto) {
+    return this.notificationsService.updatePreferences(userId, dto);
   }
 }
