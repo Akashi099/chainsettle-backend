@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, ConflictException, Logger } from '@nestjs/common';
+gimport { Injectable, UnauthorizedException, ConflictException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Keypair } from '@stellar/stellar-sdk';
@@ -7,6 +7,8 @@ import { RedisService } from '../../common/redis/redis.service';
 import { LoginDto } from './dto/login.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+
+
 
 /**
  * AuthService
@@ -35,7 +37,7 @@ export class AuthService {
     private readonly redis: RedisService,
     private readonly config: ConfigService,
     private readonly notifications: NotificationsService,
-  ) {}
+  ) { }
 
   // ----------------------------------------------------------
   // STEP 1: Generate a challenge nonce for an address

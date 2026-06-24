@@ -50,6 +50,7 @@ enum NotificationType {
   ARBITER_INVITED
   ARBITER_ACCEPTED
   ARBITER_DECLINED
+  TRACKING_UPDATED
 }
 
 enum CommentVisibility {
@@ -95,6 +96,7 @@ model User {
   auditLogs          AuditLog[]     @relation("AuditLogs")
   disputeEvidence    DisputeEvidence[]
   comments           ShipmentComment[]
+  trackingUpdates    TrackingUpdate[]
   shipmentTemplates  ShipmentTemplate[] @relation("ShipmentTemplates")
   webhookEndpoints      WebhookEndpoint[]
   notificationPreference NotificationPreference?
@@ -137,6 +139,7 @@ model Shipment {
   milestones Milestone[]
   events    ChainEvent[]
   comments  ShipmentComment[]
+  trackingUpdates TrackingUpdate[]
 
   @@map("shipments")
 }
@@ -259,6 +262,27 @@ model ShipmentComment {
   @@index([shipmentId])
   @@index([authorId])
   @@map("shipment_comments")
+}
+
+model TrackingUpdate {
+  id               String    @id @default(uuid())
+  shipmentId       String
+  submittedBy      String
+  location         String    // e.g. "Port of Lagos"
+  latitude         Float?
+  longitude        Float?
+  status           String    // e.g. "In Transit", "Customs Clearance", "Out for Delivery"
+  estimatedArrival DateTime?
+  notes            String?   @db.VarChar(500)
+  createdAt        DateTime  @default(now())
+
+  shipment   Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [submittedBy], references: [stellarAddress])
+
+  @@index([shipmentId])
+  @@index([submittedBy])
+  @@index([createdAt])
+  @@map("tracking_updates")
 }
 
 model AuditLog {
