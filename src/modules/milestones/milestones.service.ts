@@ -69,6 +69,10 @@ export class MilestonesService {
       throw new NotFoundException(`Shipment ${shipmentId} not found`);
     }
 
+    if (shipment.status === 'CANCELLED') {
+      throw new ConflictException(`Cannot submit proof: shipment ${shipmentId} is CANCELLED`);
+    }
+
     const isAuthorized =
       shipment.supplierAddress === callerAddress ||
       shipment.logisticsAddress === callerAddress;
@@ -203,6 +207,10 @@ export class MilestonesService {
       throw new NotFoundException(
         `Milestone ${milestoneIndex} not found on shipment ${shipmentId}`
       );
+    }
+
+    if (milestone.shipment.status === 'CANCELLED') {
+      throw new ConflictException(`Cannot submit dispute evidence: shipment ${shipmentId} is CANCELLED`);
     }
 
     // Check milestone status

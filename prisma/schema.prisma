@@ -126,6 +126,9 @@ model Shipment {
   metadata         Json?           // arbitrary key-value pairs (incoterms, port, etc)
   tags             String[]        @default([]) // searchable tags
 
+  cancelledAt      DateTime?       // set when shipment is cancelled
+  refundTxHash     String?         // on-chain tx hash of the cancel/refund transaction
+
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 
