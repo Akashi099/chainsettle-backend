@@ -327,13 +327,12 @@ export class EventsService implements OnModuleInit {
   }
 
   private async handleShipmentCancelled(payload: any, event: any) {
-    const [shipmentId] = Array.isArray(payload) ? payload : [payload];
-    this.logger.log(`Shipment cancelled: ${shipmentId}`);
+    const [shipmentId, refundAmount] = Array.isArray(payload) ? payload : [payload, undefined];
+    this.logger.log(`Shipment cancelled on-chain: ${shipmentId}`);
 
-    await this.prisma.shipment.update({
-      where: { id: String(shipmentId) },
-      data: { status: 'CANCELLED' },
-    });
+    // Use the refundTxHash from the on-chain event; fall back to event.txHash
+    const txHash: string = event.txHash ?? '';
+    await this.shipments.cancel(String(shipmentId), txHash);
   }
 
   // ----------------------------------------------------------

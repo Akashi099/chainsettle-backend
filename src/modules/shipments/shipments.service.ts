@@ -383,6 +383,71 @@ export class ShipmentsService {
   }
 
   // ----------------------------------------------------------
+  // CANCEL — buyer-initiated or event-driven cancellation
+  // ----------------------------------------------------------
+
+  /**
+   * Transitions a shipment to CANCELLED.
+   * - Called by the buyer via POST /shipments/:id/cancel (callerAddress required)
+   * - Called internally by EventsService (callerAddress = undefined, skips auth)
+   */
+  async cancel(
+    id: string,
+    txHash: string,
+    callerAddress?: string,
+  ) {
+    const shipment = await this.prisma.shipment.findUnique({ where: { id } });
+
+    if (!shipment) {
+      throw new NotFoundException(`Shipment ${id} not found`);
+    }
+
+    if (callerAddress && shipment.buyerAddress !== callerAddress) {
+      throw new ForbiddenException('Only the shipment buyer can cancel it');
+    }
+
+    if (
+      shipment.status === ShipmentStatus.CANCELLED ||
+      shipment.status === ShipmentStatus.COMPLETED
+    ) {
+      throw new ConflictException(
+        `Cannot cancel a shipment with status ${shipment.status}`,
+      );
+    }
+
+    const updated = await this.prisma.shipment.update({
+      where: { id },
+      data: {
+        status: ShipmentStatus.CANCELLED,
+        cancelledAt: new Date(),
+        refundTxHash: txHash,
+      },
+    });
+
+    // Notify all participants
+    const participants = [
+      shipment.supplierAddress,
+      shipment.logisticsAddress,
+      shipment.arbiterAddress,
+    ];
+
+    await Promise.all(
+      participants.map((address) =>
+        this.notifications.notifyUser(
+          address,
+          NotificationType.SHIPMENT_CANCELLED,
+          'Shipment cancelled',
+          `Shipment ${id} has been cancelled and refunded.`,
+          { shipmentId: id, refundTxHash: txHash },
+        ),
+      ),
+    );
+
+    this.logger.log(`Shipment ${id} cancelled — refundTxHash: ${txHash}`);
+    return this.serialize(updated);
+  }
+
+  // ----------------------------------------------------------
   // SYNC FROM CHAIN — called by EventsService after polling
   // ----------------------------------------------------------
 

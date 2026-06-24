@@ -69,6 +69,10 @@ export class MilestonesService {
       throw new NotFoundException(`Shipment ${shipmentId} not found`);
     }
 
+    if (shipment.status === 'CANCELLED') {
+      throw new ConflictException(`Cannot submit proof for a cancelled shipment`);
+    }
+
     const isAuthorized =
       shipment.supplierAddress === callerAddress ||
       shipment.logisticsAddress === callerAddress;
@@ -125,6 +129,11 @@ export class MilestonesService {
     milestoneIndex: number,
     proofHash: string,
   ) {
+    const shipment = await this.prisma.shipment.findUnique({ where: { id: shipmentId } });
+    if (shipment?.status === 'CANCELLED') {
+      throw new ConflictException(`Cannot submit proof for a cancelled shipment`);
+    }
+
     return this.prisma.milestone.update({
       where: { shipmentId_milestoneIndex: { shipmentId, milestoneIndex } },
       data: {
@@ -142,6 +151,11 @@ export class MilestonesService {
     milestoneIndex: number,
     paymentReleased: bigint,
   ) {
+    const shipment = await this.prisma.shipment.findUnique({ where: { id: shipmentId } });
+    if (shipment?.status === 'CANCELLED') {
+      throw new ConflictException(`Cannot confirm a milestone for a cancelled shipment`);
+    }
+
     return this.prisma.milestone.update({
       where: { shipmentId_milestoneIndex: { shipmentId, milestoneIndex } },
       data: {
@@ -156,6 +170,11 @@ export class MilestonesService {
    * Called by EventsService when a dispute_raised event is detected.
    */
   async markDisputed(shipmentId: string, milestoneIndex: number) {
+    const shipment = await this.prisma.shipment.findUnique({ where: { id: shipmentId } });
+    if (shipment?.status === 'CANCELLED') {
+      throw new ConflictException(`Cannot raise a dispute for a cancelled shipment`);
+    }
+
     return this.prisma.milestone.update({
       where: { shipmentId_milestoneIndex: { shipmentId, milestoneIndex } },
       data: { status: MilestoneStatus.DISPUTED },
@@ -203,6 +222,10 @@ export class MilestonesService {
       throw new NotFoundException(
         `Milestone ${milestoneIndex} not found on shipment ${shipmentId}`
       );
+    }
+
+    if (milestone.shipment.status === 'CANCELLED') {
+      throw new ConflictException(`Cannot submit evidence for a cancelled shipment`);
     }
 
     // Check milestone status
