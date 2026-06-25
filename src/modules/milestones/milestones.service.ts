@@ -69,6 +69,10 @@ export class MilestonesService {
       throw new NotFoundException(`Shipment ${shipmentId} not found`);
     }
 
+    if (shipment.status === 'CANCELLED') {
+      throw new ConflictException(`Cannot submit proof: shipment ${shipmentId} is CANCELLED`);
+    }
+
     const isAuthorized =
       shipment.supplierAddress === callerAddress ||
       shipment.logisticsAddress === callerAddress;
@@ -125,6 +129,11 @@ export class MilestonesService {
     milestoneIndex: number,
     proofHash: string,
   ) {
+    const shipment = await this.prisma.shipment.findUnique({ where: { id: shipmentId } });
+    if (shipment?.status === 'CANCELLED') {
+      throw new ConflictException(`Cannot submit proof for a cancelled shipment`);
+    }
+
     return this.prisma.milestone.update({
       where: { shipmentId_milestoneIndex: { shipmentId, milestoneIndex } },
       data: {
@@ -142,6 +151,11 @@ export class MilestonesService {
     milestoneIndex: number,
     paymentReleased: bigint,
   ) {
+    const shipment = await this.prisma.shipment.findUnique({ where: { id: shipmentId } });
+    if (shipment?.status === 'CANCELLED') {
+      throw new ConflictException(`Cannot confirm a milestone for a cancelled shipment`);
+    }
+
     return this.prisma.milestone.update({
       where: { shipmentId_milestoneIndex: { shipmentId, milestoneIndex } },
       data: {
@@ -156,6 +170,11 @@ export class MilestonesService {
    * Called by EventsService when a dispute_raised event is detected.
    */
   async markDisputed(shipmentId: string, milestoneIndex: number) {
+    const shipment = await this.prisma.shipment.findUnique({ where: { id: shipmentId } });
+    if (shipment?.status === 'CANCELLED') {
+      throw new ConflictException(`Cannot raise a dispute for a cancelled shipment`);
+    }
+
     return this.prisma.milestone.update({
       where: { shipmentId_milestoneIndex: { shipmentId, milestoneIndex } },
       data: { status: MilestoneStatus.DISPUTED },
@@ -205,6 +224,10 @@ export class MilestonesService {
       );
     }
 
+    if (milestone.shipment.status === 'CANCELLED') {
+      throw new ConflictException(`Cannot submit dispute evidence: shipment ${shipmentId} is CANCELLED`);
+    }
+
     // Check milestone status
     if (milestone.status !== MilestoneStatus.DISPUTED) {
       throw new ConflictException(
@@ -232,7 +255,7 @@ export class MilestonesService {
 
     if (file) {
       try {
-        ipfsCid = await this.ipfs.uploadFile(file.buffer, file.originalname);
+        ipfsCid = await this.ipfs.uploadFile(file.buffer, file.originalname, file.mimetype);
         fileName = file.originalname;
         fileSize = file.size;
         mimeType = file.mimetype;

@@ -186,6 +186,20 @@ export class ShipmentsController {
   }
 
   /**
+   * POST /api/v1/shipments/:id/cancel
+   * Buyer registers the on-chain cancellation tx hash, transitioning the shipment to CANCELLED.
+   */
+  @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Cancel a shipment (buyer only)' })
+  @ApiResponse({ status: 200, description: 'Shipment cancelled' })
+  @ApiResponse({ status: 403, description: 'Only the buyer can cancel' })
+  @ApiResponse({ status: 409, description: 'Shipment is not ACTIVE' })
+  cancel(@Param('id') id: string, @Body() dto: CancelShipmentDto, @CurrentUser() user: any) {
+    return this.shipmentsService.cancel(id, user.stellarAddress, dto.txHash);
+  }
+
+  /**
    * POST /api/v1/shipments/:id/sync
    */
     @Post(':id/sync')
