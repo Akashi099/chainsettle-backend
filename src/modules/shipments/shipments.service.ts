@@ -11,6 +11,7 @@ import { StellarService } from '../../common/stellar/stellar.service';
 import { TokenRegistryService } from '../../common/token-registry/token-registry.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateShipmentDto } from './dto/create-shipment.dto';
+import { CreateTrackingDto } from './dto/tracking.dto';
 import { ShipmentStatus, NotificationType, ArbiterStatus } from '@prisma/client';
 import { nativeToScVal } from '@stellar/stellar-sdk';
 
@@ -243,6 +244,7 @@ export class ShipmentsService {
       include: {
         milestones: { orderBy: { milestoneIndex: 'asc' } },
         events: { orderBy: { ledger: 'desc' }, take: 20 },
+        trackingUpdates: { orderBy: { createdAt: 'asc' } },
       },
     });
     if (!shipment) throw new NotFoundException(`Shipment ${id} not found`);
@@ -383,63 +385,111 @@ export class ShipmentsService {
   }
 
   // ----------------------------------------------------------
-  // CANCEL
+  // TRACKING UPDATES — logistics participant submits location/status
   // ----------------------------------------------------------
 
   /**
-   * Cancels a shipment and stores the on-chain refund tx hash.
-   * Can be called by the API (buyer-initiated) or by EventsService
-   * when the on-chain event arrives independently.
-   *
-   * @param id              - Shipment ID
-   * @param callerAddress   - Must equal shipment.buyerAddress (pass null to skip check — event path)
-   * @param txHash          - On-chain cancel transaction hash
+   * Create a tracking update for a shipment.
+   * Only the logistics participant can submit tracking updates.
+   * Tracking updates are immutable after submission.
    */
-  async cancel(id: string, callerAddress: string | null, txHash: string) {
-    const shipment = await this.prisma.shipment.findUnique({ where: { id } });
+  async createTracking(
+    shipmentId: string,
+    callerAddress: string,
+    dto: CreateTrackingDto,
+  ) {
+    const shipment = await this.prisma.shipment.findUnique({
+      where: { id: shipmentId },
+      select: { logisticsAddress: true, buyerAddress: true, supplierAddress: true, id: true },
+    });
 
-    if (!shipment) throw new NotFoundException(`Shipment ${id} not found`);
-
-    if (callerAddress && shipment.buyerAddress !== callerAddress) {
-      throw new ForbiddenException('Only the shipment buyer can cancel it');
+    if (!shipment) {
+      throw new ForbiddenException(`Shipment ${shipmentId} not found`);
     }
 
-    if (shipment.status !== ShipmentStatus.ACTIVE) {
-      throw new ConflictException(
-        `Shipment ${id} cannot be cancelled — current status is ${shipment.status}`,
-      );
+    if (shipment.logisticsAddress !== callerAddress) {
+      throw new ForbiddenException('Only the logistics participant can submit tracking updates');
     }
 
-    const updated = await this.prisma.shipment.update({
-      where: { id },
+    const trackingUpdate = await this.prisma.trackingUpdate.create({
       data: {
-        status: ShipmentStatus.CANCELLED,
-        cancelledAt: new Date(),
-        refundTxHash: txHash,
+        shipmentId: shipment.id,
+        submittedBy: callerAddress,
+        location: dto.location,
+        ...(dto.latitude !== undefined ? { latitude: dto.latitude } : {}),
+        ...(dto.longitude !== undefined ? { longitude: dto.longitude } : {}),
+        status: dto.status,
+        ...(dto.estimatedArrival ? { estimatedArrival: new Date(dto.estimatedArrival) } : {}),
+        ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
       },
     });
 
-    // Notify all participants
-    const recipients = [
-      shipment.supplierAddress,
-      shipment.logisticsAddress,
-      shipment.arbiterAddress,
-    ];
+    // Notify buyer and supplier
+    const etaText = trackingUpdate.estimatedArrival
+      ? ` ETA: ${trackingUpdate.estimatedArrival.toISOString()}`
+      : '';
+    const notificationMessage = `Logistics update: ${trackingUpdate.status} at ${trackingUpdate.location}.${etaText}`;
 
-    await Promise.all(
-      recipients.map((address) =>
-        this.notifications.notifyUser(
-          address,
-          NotificationType.SHIPMENT_CANCELLED,
-          'Shipment cancelled',
-          `Shipment ${id} has been cancelled by the buyer.`,
-          { shipmentId: id, refundTxHash: txHash },
-        ),
-      ),
+    await this.notifications.notifyUser(
+      shipment.buyerAddress,
+      NotificationType.TRACKING_UPDATED,
+      'Shipment tracking update',
+      notificationMessage,
+      {
+        shipmentId: shipment.id,
+        status: trackingUpdate.status,
+        location: trackingUpdate.location,
+        estimatedArrival: trackingUpdate.estimatedArrival?.toISOString() ?? null,
+      },
     );
 
-    this.logger.log(`Shipment ${id} cancelled — refundTxHash: ${txHash}`);
-    return this.serialize(updated);
+    await this.notifications.notifyUser(
+      shipment.supplierAddress,
+      NotificationType.TRACKING_UPDATED,
+      'Shipment tracking update',
+      notificationMessage,
+      {
+        shipmentId: shipment.id,
+        status: trackingUpdate.status,
+        location: trackingUpdate.location,
+        estimatedArrival: trackingUpdate.estimatedArrival?.toISOString() ?? null,
+      },
+    );
+
+    this.logger.log(`Tracking update created for shipment ${shipmentId} by ${callerAddress}: ${trackingUpdate.status} at ${trackingUpdate.location}`);
+    return trackingUpdate;
+  }
+
+  /**
+   * Get all tracking updates for a shipment in chronological order.
+   * Restricted to shipment participants.
+   */
+  async getTracking(shipmentId: string, callerAddress: string) {
+    const shipment = await this.prisma.shipment.findUnique({
+      where: { id: shipmentId },
+      select: { buyerAddress: true, supplierAddress: true, logisticsAddress: true, arbiterAddress: true },
+    });
+
+    if (!shipment) {
+      throw new ForbiddenException(`Shipment ${shipmentId} not found`);
+    }
+
+    const isParticipant =
+      callerAddress === shipment.buyerAddress ||
+      callerAddress === shipment.supplierAddress ||
+      callerAddress === shipment.logisticsAddress ||
+      callerAddress === shipment.arbiterAddress;
+
+    if (!isParticipant) {
+      throw new ForbiddenException('Not authorized to view tracking updates for this shipment');
+    }
+
+    const trackingUpdates = await this.prisma.trackingUpdate.findMany({
+      where: { shipmentId },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return trackingUpdates;
   }
 
   // ----------------------------------------------------------
@@ -646,14 +696,27 @@ export class ShipmentsService {
     const decimals: number = shipment.tokenDecimals ?? 7;
     const symbol: string = shipment.tokenSymbol ?? 'USDC';
 
+    const trackingUpdates = shipment.trackingUpdates?.map((t: any) => ({
+      id: t.id,
+      location: t.location,
+      latitude: t.latitude,
+      longitude: t.longitude,
+      status: t.status,
+      estimatedArrival: t.estimatedArrival?.toISOString() ?? null,
+      notes: t.notes,
+      createdAt: t.createdAt.toISOString(),
+    }));
+
+    const latestTracking = trackingUpdates && trackingUpdates.length > 0
+      ? trackingUpdates[trackingUpdates.length - 1]
+      : null;
+
     return {
       ...shipment,
       tokenSymbol: symbol,
       tokenDecimals: decimals,
-      // Raw values kept for backward compatibility
       totalAmount: shipment.totalAmount?.toString(),
       releasedAmount: shipment.releasedAmount?.toString(),
-      // Human-readable display values
       totalAmountFormatted: this.stellar.toHumanAmount(shipment.totalAmount ?? 0n, decimals),
       releasedAmountFormatted: this.stellar.toHumanAmount(shipment.releasedAmount ?? 0n, decimals),
       milestones: shipment.milestones?.map((m: any) => {
@@ -669,6 +732,8 @@ export class ShipmentsService {
           isOverdue: Boolean(isOverdue),
         };
       }),
+      trackingUpdates,
+      latestTracking,
     };
   }
 }

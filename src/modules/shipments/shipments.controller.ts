@@ -22,7 +22,8 @@ import {
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { ShipmentsService } from './shipments.service';
-import { CreateShipmentDto, UpdateShipmentDto, CancelShipmentDto } from './dto/create-shipment.dto';
+import { CreateShipmentDto, UpdateShipmentDto } from './dto/create-shipment.dto';
+import { CreateTrackingDto } from './dto/tracking.dto';
 import { FindAllShipmentsDto } from './dto/find-all-shipments.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -201,11 +202,43 @@ export class ShipmentsController {
   /**
    * POST /api/v1/shipments/:id/sync
    */
-  @Post(':id/sync')
-  @UseGuards(ShipmentParticipantGuard)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Force sync shipment status from Stellar chain' })
-  sync(@Param('id') id: string) {
-    return this.shipmentsService.syncStatusFromChain(id);
+    @Post(':id/sync')
+    @UseGuards(ShipmentParticipantGuard)
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: 'Force sync shipment status from Stellar chain' })
+    sync(@Param('id') id: string) {
+      return this.shipmentsService.syncStatusFromChain(id);
+    }
+
+    /**
+     * POST /api/v1/shipments/:id/tracking
+     * Submit a tracking update (location, status, ETA). Restricted to logistics participant.
+     * Tracking updates are immutable after submission.
+     */
+    @Post(':id/tracking')
+    @HttpCode(HttpStatus.CREATED)
+    @ApiOperation({ summary: 'Submit a tracking update for a shipment (logistics only)' })
+    @ApiResponse({ status: 201, description: 'Tracking update created' })
+    @ApiResponse({ status: 403, description: 'Only logistics participant can submit' })
+    @ApiResponse({ status: 404, description: 'Shipment not found' })
+    createTracking(@Param('id') id: string, @Body() dto: CreateTrackingDto, @CurrentUser() user: any) {
+      return this.shipmentsService.createTracking(id, user.stellarAddress, dto);
+    }
+
+    /**
+     * GET /api/v1/shipments/:id/tracking
+     * Get all tracking updates for a shipment in chronological order.
+     * Restricted to shipment participants.
+     */
+    @Get(':id/tracking')
+    @UseGuards(ShipmentParticipantGuard)
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: 'Get all tracking updates for a shipment in chronological order' })
+    @ApiResponse({ status: 200, description: 'Tracking updates retrieved' })
+    @ApiResponse({ status: 403, description: 'Not a shipment participant' })
+    getTracking(@Param('id') id: string, @CurrentUser() user: any) {
+      return this.shipmentsService.getTracking(id, user.stellarAddress);
+    }
   }
+}
 }

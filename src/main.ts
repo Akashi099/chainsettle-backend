@@ -19,18 +19,55 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const port = configService.get<number>('PORT', 3000);
   const apiPrefix = configService.get<string>('API_PREFIX', 'api/v1');
-  const corsOrigin = configService.get<string>('CORS_ORIGIN', 'http://localhost:5173');
+  const allowedOrigins = configService
+    .get<string>('ALLOWED_ORIGINS')
+    ?.split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
 
-  // Security
-  app.use(helmet());
+  // Backwards compatible fallback for older env setups.
+  const fallbackOrigin = configService.get<string>('CORS_ORIGIN', 'http://localhost:5173');
 
-  // CORS — allow the frontend origin
+  // Helmet — tuned for production security headers.
+  // Note: `helmet()` already sets X-Powered-By removal for Express, but we also explicitly disable it below.
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        useDefaults: false,
+        directives: {
+          'default-src': ["'self'"],
+        },
+      },
+      hsts: {
+        maxAge: 31536000,
+        includeSubDomains: true,
+        preload: false,
+      },
+      noSniff: true,
+      frameguard: { action: 'deny' },
+      xssFilter: true,
+    }),
+  );
+
+  // Ensure X-Powered-By is not present (belt-and-suspenders; helmet does this by default).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const expressApp = app.getHttpAdapter().getInstance() as any;
+  if (expressApp?.disable) {
+    expressApp.disable('x-powered-by');
+  }
+
+  // CORS — strict origin allowlist.
+  // Cross-origin credentials are allowed only for configured origins.
   app.enableCors({
-    origin: corsOrigin,
+    origin:
+      allowedOrigins && allowedOrigins.length > 0
+        ? allowedOrigins
+        : [fallbackOrigin],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
   });
+
 
   // Global prefix for all routes
   app.setGlobalPrefix(apiPrefix);
@@ -38,10 +75,12 @@ async function bootstrap() {
   // Global validation pipe — safely auto-validates and transforms all incoming DTO inputs
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true,                                      // strip out all non-whitelisted fields sent in requests
-      transform: true,                                      // automatically transform plain objects to type-instantiated DTO classes
+      whitelist: true, // strip out all non-whitelisted fields sent in requests
+      forbidNonWhitelisted: true, // reject requests with unknown properties
+      transform: true, // automatically transform plain objects to type-instantiated DTO classes
       transformOptions: { enableImplicitConversion: true }, // ensures query strings safely cast into expected primitive types
     }),
+
   );
 
   // Global exception filter — standardised error responses
