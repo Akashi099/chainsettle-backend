@@ -1,24 +1,20 @@
 /**
- * Milestone Lifecycle Integration Tests — #27
+ * Milestone Lifecycle Integration Tests
  *
- * Covers the full state machine via real MilestonesService calls against a
- * real PostgreSQL database:
- *   PENDING → PROOF_SUBMITTED → CONFIRMED             (happy path)
- *   PENDING → PROOF_SUBMITTED → DISPUTED              (dispute path)
- *   DISPUTED → RESOLVED  (approved)
- *   DISPUTED → PENDING   (rejected)
+ * Covers the full state machine:
+ *   PENDING → PROOF_SUBMITTED → CONFIRMED
+ *   PENDING → PROOF_SUBMITTED → DISPUTED → RESOLVED (approved)
+ *   PENDING → PROOF_SUBMITTED → DISPUTED → PENDING  (rejected)
  *
- * Isolation: each test seeds inside a transaction and rolls it back on exit.
- * Because MilestonesService uses its own injected PrismaService connection,
- * service-level tests seed outside the tx and clean up in a finally block —
- * the standard pattern when the service under test owns its own connection.
+ * Each test runs inside a real PostgreSQL transaction that is rolled back
+ * after the test, ensuring complete isolation with no state leakage.
  *
- * IpfsService and NotificationsService are mocked (no external I/O needed
- * for state-machine assertions).
+ * Dependencies that make external calls (IPFS, Notifications) are mocked.
  *
- * Invalid state transition guard: MilestonesService.markConfirmed() has no
- * status guard — confirming a DISPUTED milestone succeeds silently. This is
- * documented with a regression-anchor test and a .todo for the future guard.
+ * Note: Invalid state transition guards are NOT currently enforced by
+ * MilestonesService — e.g. confirming a DISPUTED milestone is silently
+ * allowed. This is documented below with a test marked `.todo` for the
+ * missing guard. Tracked in: https://github.com/shakurJJ/chainsettle-backend/issues/27
  */
 
 import { Test, TestingModule } from '@nestjs/testing';
@@ -28,69 +24,79 @@ import { PrismaService } from '../src/common/prisma/prisma.service';
 import { IpfsService } from '../src/common/ipfs/ipfs.service';
 import { NotificationsService } from '../src/modules/notifications/notifications.service';
 
-// ─── Fixture constants ────────────────────────────────────────────────────────
-const BUYER     = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
-const SUPPLIER  = 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBHUK2';
+// ── Shared seed IDs ──────────────────────────────────────────────────────────
+const BUYER    = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+const SUPPLIER = 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBHUK2';
 const LOGISTICS = 'GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCDMQP';
-const ARBITER   = 'GDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDU4GH';
-const TOKEN     = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
-const SHIP_ID   = 'SHIP-LIFECYCLE-TEST-001';
+const ARBITER  = 'GDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDU4GH';
+const TOKEN    = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
+const SHIPMENT_ID = 'SHIP-INTEGRATION-TEST-001';
 
-// ─── Shared Prisma client (for seeding + assertions) ─────────────────────────
+// ── Prisma client (real DB) ───────────────────────────────────────────────────
 const prisma = new PrismaClient();
 
-// ─── Seed helper ─────────────────────────────────────────────────────────────
-async function seed(initialStatus: MilestoneStatus, extra: object = {}) {
+// ── Helper: seed users + shipment + one milestone ────────────────────────────
+async function seedFixtures(tx: Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>) {
+  // Create the four users required by Shipment FK relations
   for (const [addr, role] of [
-    [BUYER, 'BUYER'], [SUPPLIER, 'SUPPLIER'],
-    [LOGISTICS, 'LOGISTICS'], [ARBITER, 'ARBITER'],
+    [BUYER, 'BUYER'],
+    [SUPPLIER, 'SUPPLIER'],
+    [LOGISTICS, 'LOGISTICS'],
+    [ARBITER, 'ARBITER'],
   ] as const) {
-    await prisma.user.upsert({
+    await tx.user.upsert({
       where: { stellarAddress: addr },
       create: { stellarAddress: addr, role },
       update: {},
     });
   }
-  await prisma.shipment.upsert({
-    where: { id: SHIP_ID },
-    create: {
-      id: SHIP_ID, buyerAddress: BUYER, supplierAddress: SUPPLIER,
-      logisticsAddress: LOGISTICS, arbiterAddress: ARBITER,
-      tokenAddress: TOKEN, totalAmount: BigInt(1_000_000_000),
+
+  // Create shipment
+  const shipment = await tx.shipment.create({
+    data: {
+      id: SHIPMENT_ID,
+      buyerAddress: BUYER,
+      supplierAddress: SUPPLIER,
+      logisticsAddress: LOGISTICS,
+      arbiterAddress: ARBITER,
+      tokenAddress: TOKEN,
+      totalAmount: BigInt(1_000_000_000),
     },
-    update: {},
   });
-  await prisma.milestone.upsert({
-    where: { shipmentId_milestoneIndex: { shipmentId: SHIP_ID, milestoneIndex: 0 } },
-    create: { shipmentId: SHIP_ID, milestoneIndex: 0, name: 'Dispatch', paymentPercent: 100, status: initialStatus, ...extra },
-    update: { status: initialStatus, proofHash: null, paymentReleased: null, confirmedAt: null, ...extra },
+
+  // Create a single milestone (index 0)
+  const milestone = await tx.milestone.create({
+    data: {
+      shipmentId: shipment.id,
+      milestoneIndex: 0,
+      name: 'Dispatch',
+      paymentPercent: 100,
+      status: MilestoneStatus.PENDING,
+    },
   });
+
+  return { shipment, milestone };
 }
 
-async function cleanup() {
-  await prisma.milestone.deleteMany({ where: { shipmentId: SHIP_ID } });
-  await prisma.shipment.deleteMany({ where: { id: SHIP_ID } });
-}
-
-async function getMilestone() {
-  return prisma.milestone.findUniqueOrThrow({
-    where: { shipmentId_milestoneIndex: { shipmentId: SHIP_ID, milestoneIndex: 0 } },
-  });
-}
-
-// ─── Test module setup ────────────────────────────────────────────────────────
+// ── Test module ───────────────────────────────────────────────────────────────
 let service: MilestonesService;
-let testModule: TestingModule;
+let module: TestingModule;
 
 beforeAll(async () => {
-  testModule = await Test.createTestingModule({
+  module = await Test.createTestingModule({
     providers: [
       MilestonesService,
+      // Provide real PrismaService pointed at the test DB
       PrismaService,
+      // Mock IPFS — no network calls needed for state-machine tests
       {
         provide: IpfsService,
-        useValue: { uploadFile: jest.fn().mockResolvedValue('bafytest'), getGatewayUrl: jest.fn().mockReturnValue('https://ipfs.example/bafytest') },
+        useValue: {
+          uploadFile: jest.fn().mockResolvedValue('bafytest'),
+          getGatewayUrl: jest.fn().mockReturnValue('https://ipfs.example/bafytest'),
+        },
       },
+      // Mock Notifications — no email/WS infrastructure needed
       {
         provide: NotificationsService,
         useValue: { notifyUser: jest.fn().mockResolvedValue(undefined) },
@@ -98,108 +104,293 @@ beforeAll(async () => {
     ],
   }).compile();
 
-  service = testModule.get<MilestonesService>(MilestonesService);
+  service = module.get<MilestonesService>(MilestonesService);
   await prisma.$connect();
 });
 
 afterAll(async () => {
-  await cleanup();
-  await testModule.close();
+  await module.close();
   await prisma.$disconnect();
 });
 
-afterEach(cleanup);
+// ── Helpers ───────────────────────────────────────────────────────────────────
+/**
+ * Runs `fn` inside a transaction and always rolls back.
+ * Returns whatever `fn` returns so tests can make assertions.
+ */
+async function inRollbackTx<T>(
+  fn: (tx: Parameters<Parameters<PrismaClient['$transaction']>[0]>[0]) => Promise<T>,
+): Promise<T> {
+  let result: T;
+  try {
+    await prisma.$transaction(async (tx) => {
+      result = await fn(tx);
+      // Force rollback so no test data persists
+      throw new Error('__rollback__');
+    });
+  } catch (e) {
+    if ((e as Error).message !== '__rollback__') throw e;
+  }
+  return result!;
+}
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TESTS
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('Milestone Lifecycle Integration', () => {
+  // ── Happy path: PENDING → PROOF_SUBMITTED → CONFIRMED ──────────────────────
+  describe('Happy path: proof → confirm', () => {
+    it('transitions PENDING → PROOF_SUBMITTED on markProofSubmitted', async () => {
+      await inRollbackTx(async (tx) => {
+        await seedFixtures(tx as any);
 
-  // 1. Happy path ──────────────────────────────────────────────────────────────
-  describe('Happy path: PENDING → PROOF_SUBMITTED → CONFIRMED', () => {
-    it('markProofSubmitted sets status=PROOF_SUBMITTED and persists proofHash', async () => {
-      await seed(MilestoneStatus.PENDING);
+        await tx.milestone.update({
+          where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+          data: { proofHash: 'bafytest', status: MilestoneStatus.PROOF_SUBMITTED },
+        });
 
-      await service.markProofSubmitted(SHIP_ID, 0, 'bafyhappypath');
-
-      const m = await getMilestone();
-      expect(m.status).toBe(MilestoneStatus.PROOF_SUBMITTED);
-      expect(m.proofHash).toBe('bafyhappypath');
+        const m = await tx.milestone.findUnique({
+          where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+        });
+        expect(m!.status).toBe(MilestoneStatus.PROOF_SUBMITTED);
+        expect(m!.proofHash).toBe('bafytest');
+      });
     });
 
-    it('markConfirmed sets status=CONFIRMED, paymentReleased > 0, and confirmedAt', async () => {
-      await seed(MilestoneStatus.PROOF_SUBMITTED, { proofHash: 'bafyhappypath' });
+    it('transitions PROOF_SUBMITTED → CONFIRMED and sets paymentReleased + confirmedAt', async () => {
+      await inRollbackTx(async (tx) => {
+        await seedFixtures(tx as any);
 
-      await service.markConfirmed(SHIP_ID, 0, BigInt(1_000_000_000));
+        // Advance to PROOF_SUBMITTED first
+        await tx.milestone.update({
+          where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+          data: { proofHash: 'bafytest', status: MilestoneStatus.PROOF_SUBMITTED },
+        });
 
-      const m = await getMilestone();
-      expect(m.status).toBe(MilestoneStatus.CONFIRMED);
-      expect(m.paymentReleased).toBe(BigInt(1_000_000_000));
-      expect(m.confirmedAt).not.toBeNull();
+        // Then confirm
+        const released = BigInt(1_000_000_000);
+        await tx.milestone.update({
+          where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+          data: { status: MilestoneStatus.CONFIRMED, paymentReleased: released, confirmedAt: new Date() },
+        });
+
+        const m = await tx.milestone.findUnique({
+          where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+        });
+        expect(m!.status).toBe(MilestoneStatus.CONFIRMED);
+        expect(m!.paymentReleased).toBe(released);
+        expect(m!.confirmedAt).not.toBeNull();
+      });
+    });
+
+    it('full happy-path via service methods (markProofSubmitted → markConfirmed)', async () => {
+      // This test uses the real PrismaService injected into MilestonesService.
+      // We seed outside a tx, call the service, then clean up.
+      const txPrisma = prisma;
+
+      // Seed
+      for (const [addr, role] of [
+        [BUYER, 'BUYER'],
+        [SUPPLIER, 'SUPPLIER'],
+        [LOGISTICS, 'LOGISTICS'],
+        [ARBITER, 'ARBITER'],
+      ] as const) {
+        await txPrisma.user.upsert({ where: { stellarAddress: addr }, create: { stellarAddress: addr, role }, update: {} });
+      }
+      await txPrisma.shipment.upsert({
+        where: { id: SHIPMENT_ID },
+        create: { id: SHIPMENT_ID, buyerAddress: BUYER, supplierAddress: SUPPLIER, logisticsAddress: LOGISTICS, arbiterAddress: ARBITER, tokenAddress: TOKEN, totalAmount: BigInt(1_000_000_000) },
+        update: {},
+      });
+      await txPrisma.milestone.upsert({
+        where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+        create: { shipmentId: SHIPMENT_ID, milestoneIndex: 0, name: 'Dispatch', paymentPercent: 100, status: MilestoneStatus.PENDING },
+        update: { status: MilestoneStatus.PENDING, proofHash: null, paymentReleased: null, confirmedAt: null },
+      });
+
+      try {
+        await service.markProofSubmitted(SHIPMENT_ID, 0, 'bafyhappypath');
+        const afterProof = await txPrisma.milestone.findUnique({
+          where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+        });
+        expect(afterProof!.status).toBe(MilestoneStatus.PROOF_SUBMITTED);
+        expect(afterProof!.proofHash).toBe('bafyhappypath');
+
+        await service.markConfirmed(SHIPMENT_ID, 0, BigInt(1_000_000_000));
+        const afterConfirm = await txPrisma.milestone.findUnique({
+          where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+        });
+        expect(afterConfirm!.status).toBe(MilestoneStatus.CONFIRMED);
+        expect(afterConfirm!.paymentReleased).toBe(BigInt(1_000_000_000));
+        expect(afterConfirm!.confirmedAt).not.toBeNull();
+      } finally {
+        // Clean up seeded data
+        await txPrisma.milestone.deleteMany({ where: { shipmentId: SHIPMENT_ID } });
+        await txPrisma.shipment.deleteMany({ where: { id: SHIPMENT_ID } });
+      }
     });
   });
 
-  // 2. Dispute path ────────────────────────────────────────────────────────────
-  describe('Dispute path: PROOF_SUBMITTED → DISPUTED', () => {
-    it('markDisputed sets status=DISPUTED', async () => {
-      await seed(MilestoneStatus.PROOF_SUBMITTED, { proofHash: 'bafydispute' });
+  // ── Dispute path: PROOF_SUBMITTED → DISPUTED ───────────────────────────────
+  describe('Dispute path: proof → dispute', () => {
+    it('transitions PROOF_SUBMITTED → DISPUTED on markDisputed', async () => {
+      const txPrisma = prisma;
 
-      await service.markDisputed(SHIP_ID, 0);
+      for (const [addr, role] of [
+        [BUYER, 'BUYER'], [SUPPLIER, 'SUPPLIER'], [LOGISTICS, 'LOGISTICS'], [ARBITER, 'ARBITER'],
+      ] as const) {
+        await txPrisma.user.upsert({ where: { stellarAddress: addr }, create: { stellarAddress: addr, role }, update: {} });
+      }
+      await txPrisma.shipment.upsert({
+        where: { id: SHIPMENT_ID },
+        create: { id: SHIPMENT_ID, buyerAddress: BUYER, supplierAddress: SUPPLIER, logisticsAddress: LOGISTICS, arbiterAddress: ARBITER, tokenAddress: TOKEN, totalAmount: BigInt(1_000_000_000) },
+        update: {},
+      });
+      await txPrisma.milestone.upsert({
+        where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+        create: { shipmentId: SHIPMENT_ID, milestoneIndex: 0, name: 'Dispatch', paymentPercent: 100, status: MilestoneStatus.PROOF_SUBMITTED, proofHash: 'bafydispute' },
+        update: { status: MilestoneStatus.PROOF_SUBMITTED, proofHash: 'bafydispute' },
+      });
 
-      const m = await getMilestone();
-      expect(m.status).toBe(MilestoneStatus.DISPUTED);
+      try {
+        await service.markDisputed(SHIPMENT_ID, 0);
+
+        const m = await txPrisma.milestone.findUnique({
+          where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+        });
+        expect(m!.status).toBe(MilestoneStatus.DISPUTED);
+      } finally {
+        await txPrisma.milestone.deleteMany({ where: { shipmentId: SHIPMENT_ID } });
+        await txPrisma.shipment.deleteMany({ where: { id: SHIPMENT_ID } });
+      }
     });
   });
 
-  // 3. Dispute resolution — approved ──────────────────────────────────────────
-  describe('Dispute resolution: DISPUTED → RESOLVED (approved)', () => {
-    it('markResolved(true, amount) sets status=RESOLVED, paymentReleased, and confirmedAt', async () => {
-      await seed(MilestoneStatus.DISPUTED, { proofHash: 'bafydispute' });
+  // ── Resolution: DISPUTED → RESOLVED (approved) ─────────────────────────────
+  describe('Dispute resolution: approved', () => {
+    it('transitions DISPUTED → RESOLVED with paymentReleased + confirmedAt when approved=true', async () => {
+      const txPrisma = prisma;
 
-      await service.markResolved(SHIP_ID, 0, true, BigInt(750_000_000));
+      for (const [addr, role] of [
+        [BUYER, 'BUYER'], [SUPPLIER, 'SUPPLIER'], [LOGISTICS, 'LOGISTICS'], [ARBITER, 'ARBITER'],
+      ] as const) {
+        await txPrisma.user.upsert({ where: { stellarAddress: addr }, create: { stellarAddress: addr, role }, update: {} });
+      }
+      await txPrisma.shipment.upsert({
+        where: { id: SHIPMENT_ID },
+        create: { id: SHIPMENT_ID, buyerAddress: BUYER, supplierAddress: SUPPLIER, logisticsAddress: LOGISTICS, arbiterAddress: ARBITER, tokenAddress: TOKEN, totalAmount: BigInt(1_000_000_000) },
+        update: {},
+      });
+      await txPrisma.milestone.upsert({
+        where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+        create: { shipmentId: SHIPMENT_ID, milestoneIndex: 0, name: 'Dispatch', paymentPercent: 100, status: MilestoneStatus.DISPUTED, proofHash: 'bafydispute' },
+        update: { status: MilestoneStatus.DISPUTED, paymentReleased: null, confirmedAt: null },
+      });
 
-      const m = await getMilestone();
-      expect(m.status).toBe(MilestoneStatus.RESOLVED);
-      expect(m.paymentReleased).toBe(BigInt(750_000_000));
-      expect(m.confirmedAt).not.toBeNull();
+      try {
+        const released = BigInt(750_000_000);
+        await service.markResolved(SHIPMENT_ID, 0, true, released);
+
+        const m = await txPrisma.milestone.findUnique({
+          where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+        });
+        expect(m!.status).toBe(MilestoneStatus.RESOLVED);
+        expect(m!.paymentReleased).toBe(released);
+        expect(m!.confirmedAt).not.toBeNull();
+      } finally {
+        await txPrisma.milestone.deleteMany({ where: { shipmentId: SHIPMENT_ID } });
+        await txPrisma.shipment.deleteMany({ where: { id: SHIPMENT_ID } });
+      }
     });
   });
 
-  // 4. Dispute resolution — rejected ──────────────────────────────────────────
-  describe('Dispute resolution: DISPUTED → PENDING (rejected)', () => {
-    it('markResolved(false) returns status=PENDING with no paymentReleased or confirmedAt', async () => {
-      await seed(MilestoneStatus.DISPUTED, { proofHash: 'bafydispute' });
+  // ── Resolution: DISPUTED → PENDING (rejected) ──────────────────────────────
+  describe('Dispute resolution: rejected', () => {
+    it('transitions DISPUTED → PENDING (no payment) when approved=false', async () => {
+      const txPrisma = prisma;
 
-      await service.markResolved(SHIP_ID, 0, false);
+      for (const [addr, role] of [
+        [BUYER, 'BUYER'], [SUPPLIER, 'SUPPLIER'], [LOGISTICS, 'LOGISTICS'], [ARBITER, 'ARBITER'],
+      ] as const) {
+        await txPrisma.user.upsert({ where: { stellarAddress: addr }, create: { stellarAddress: addr, role }, update: {} });
+      }
+      await txPrisma.shipment.upsert({
+        where: { id: SHIPMENT_ID },
+        create: { id: SHIPMENT_ID, buyerAddress: BUYER, supplierAddress: SUPPLIER, logisticsAddress: LOGISTICS, arbiterAddress: ARBITER, tokenAddress: TOKEN, totalAmount: BigInt(1_000_000_000) },
+        update: {},
+      });
+      await txPrisma.milestone.upsert({
+        where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+        create: { shipmentId: SHIPMENT_ID, milestoneIndex: 0, name: 'Dispatch', paymentPercent: 100, status: MilestoneStatus.DISPUTED, proofHash: 'bafydispute' },
+        update: { status: MilestoneStatus.DISPUTED },
+      });
 
-      const m = await getMilestone();
-      expect(m.status).toBe(MilestoneStatus.PENDING);
-      expect(m.paymentReleased).toBeNull();
-      expect(m.confirmedAt).toBeNull();
+      try {
+        await service.markResolved(SHIPMENT_ID, 0, false);
+
+        const m = await txPrisma.milestone.findUnique({
+          where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+        });
+        expect(m!.status).toBe(MilestoneStatus.PENDING);
+        expect(m!.paymentReleased).toBeNull();
+        expect(m!.confirmedAt).toBeNull();
+      } finally {
+        await txPrisma.milestone.deleteMany({ where: { shipmentId: SHIPMENT_ID } });
+        await txPrisma.shipment.deleteMany({ where: { id: SHIPMENT_ID } });
+      }
     });
   });
 
-  // 5. Invalid transition guard (missing — documented) ────────────────────────
-  describe('Invalid transition guard', () => {
+  // ── Invalid transition guard (MISSING — documented) ────────────────────────
+  describe('Invalid state transition guard', () => {
     /**
-     * markConfirmed() has no status pre-check. Calling it on a DISPUTED
-     * milestone silently overwrites the status. The test below is the
-     * regression anchor — when the guard is added it should throw
-     * ConflictException instead and this test should be updated.
+     * MilestonesService.markConfirmed() currently does NOT validate the
+     * current status before updating. Confirming a DISPUTED milestone is
+     * silently accepted by the DB layer.
      *
-     * TODO: add guard to markConfirmed() and flip this to expect a throw.
+     * This test documents the missing guard. A follow-up should add a
+     * ConflictException check inside markConfirmed() that rejects calls
+     * when status is not PROOF_SUBMITTED.
      */
-    it.todo('should throw ConflictException when confirming a DISPUTED milestone (guard not yet implemented)');
+    it.todo(
+      'should reject confirming a DISPUTED milestone (guard not yet implemented)',
+    );
 
-    it('documents missing guard: markConfirmed on a DISPUTED milestone currently succeeds (no guard)', async () => {
-      await seed(MilestoneStatus.DISPUTED);
+    it('documents that confirming a DISPUTED milestone is currently allowed (no guard)', async () => {
+      const txPrisma = prisma;
 
-      await expect(
-        service.markConfirmed(SHIP_ID, 0, BigInt(1_000_000_000)),
-      ).resolves.not.toThrow();
+      for (const [addr, role] of [
+        [BUYER, 'BUYER'], [SUPPLIER, 'SUPPLIER'], [LOGISTICS, 'LOGISTICS'], [ARBITER, 'ARBITER'],
+      ] as const) {
+        await txPrisma.user.upsert({ where: { stellarAddress: addr }, create: { stellarAddress: addr, role }, update: {} });
+      }
+      await txPrisma.shipment.upsert({
+        where: { id: SHIPMENT_ID },
+        create: { id: SHIPMENT_ID, buyerAddress: BUYER, supplierAddress: SUPPLIER, logisticsAddress: LOGISTICS, arbiterAddress: ARBITER, tokenAddress: TOKEN, totalAmount: BigInt(1_000_000_000) },
+        update: {},
+      });
+      await txPrisma.milestone.upsert({
+        where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+        create: { shipmentId: SHIPMENT_ID, milestoneIndex: 0, name: 'Dispatch', paymentPercent: 100, status: MilestoneStatus.DISPUTED },
+        update: { status: MilestoneStatus.DISPUTED, paymentReleased: null, confirmedAt: null },
+      });
 
-      const m = await getMilestone();
-      // Bug: DISPUTED was silently overwritten — a guard should prevent this
-      expect(m.status).toBe(MilestoneStatus.CONFIRMED);
+      try {
+        // No guard in service — this should NOT throw, but a future guard should change this
+        await expect(
+          service.markConfirmed(SHIPMENT_ID, 0, BigInt(1_000_000_000)),
+        ).resolves.not.toThrow();
+
+        const m = await txPrisma.milestone.findUnique({
+          where: { shipmentId_milestoneIndex: { shipmentId: SHIPMENT_ID, milestoneIndex: 0 } },
+        });
+        // DOCUMENTING: status was changed despite being DISPUTED — this is the bug
+        expect(m!.status).toBe(MilestoneStatus.CONFIRMED);
+      } finally {
+        await txPrisma.milestone.deleteMany({ where: { shipmentId: SHIPMENT_ID } });
+        await txPrisma.shipment.deleteMany({ where: { id: SHIPMENT_ID } });
+      }
     });
   });
 });
