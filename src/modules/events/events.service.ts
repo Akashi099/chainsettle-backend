@@ -330,9 +330,17 @@ export class EventsService implements OnModuleInit {
     const [shipmentId, refundAmount] = Array.isArray(payload) ? payload : [payload, undefined];
     this.logger.log(`Shipment cancelled on-chain: ${shipmentId}`);
 
-    // Use the refundTxHash from the on-chain event; fall back to event.txHash
-    const txHash: string = event.txHash ?? '';
-    await this.shipments.cancel(String(shipmentId), txHash);
+    try {
+      // Pass null as callerAddress to bypass the buyer-only guard on the event path
+      await this.shipments.cancel(String(shipmentId), null, event.txHash ?? '');
+    } catch (err: any) {
+      // If the API already cancelled it, the status won't be ACTIVE — that's fine
+      if (err?.status === 409) {
+        this.logger.debug(`Shipment ${shipmentId} already cancelled — skipping event update`);
+      } else {
+        throw err;
+      }
+    }
   }
 
   // ----------------------------------------------------------

@@ -70,7 +70,7 @@ export class MilestonesService {
     }
 
     if (shipment.status === 'CANCELLED') {
-      throw new ConflictException(`Cannot submit proof for a cancelled shipment`);
+      throw new ConflictException(`Cannot submit proof: shipment ${shipmentId} is CANCELLED`);
     }
 
     const isAuthorized =
@@ -225,7 +225,7 @@ export class MilestonesService {
     }
 
     if (milestone.shipment.status === 'CANCELLED') {
-      throw new ConflictException(`Cannot submit evidence for a cancelled shipment`);
+      throw new ConflictException(`Cannot submit dispute evidence: shipment ${shipmentId} is CANCELLED`);
     }
 
     // Check milestone status

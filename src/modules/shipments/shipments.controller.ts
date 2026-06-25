@@ -22,8 +22,7 @@ import {
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { ShipmentsService } from './shipments.service';
-import { CreateShipmentDto, UpdateShipmentDto } from './dto/create-shipment.dto';
-import { CancelShipmentDto } from './dto/cancel-shipment.dto';
+import { CreateShipmentDto, UpdateShipmentDto, CancelShipmentDto } from './dto/create-shipment.dto';
 import { FindAllShipmentsDto } from './dto/find-all-shipments.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -187,21 +186,16 @@ export class ShipmentsController {
 
   /**
    * POST /api/v1/shipments/:id/cancel
-   * Buyer-initiated cancellation: records the on-chain refund tx hash and
-   * transitions the shipment to CANCELLED.
+   * Buyer registers the on-chain cancellation tx hash, transitioning the shipment to CANCELLED.
    */
   @Post(':id/cancel')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Cancel a shipment (buyer only)' })
   @ApiResponse({ status: 200, description: 'Shipment cancelled' })
   @ApiResponse({ status: 403, description: 'Only the buyer can cancel' })
-  @ApiResponse({ status: 409, description: 'Shipment already cancelled or completed' })
-  cancel(
-    @Param('id') id: string,
-    @Body() dto: CancelShipmentDto,
-    @CurrentUser() user: any,
-  ) {
-    return this.shipmentsService.cancel(id, dto.txHash, user.stellarAddress);
+  @ApiResponse({ status: 409, description: 'Shipment is not ACTIVE' })
+  cancel(@Param('id') id: string, @Body() dto: CancelShipmentDto, @CurrentUser() user: any) {
+    return this.shipmentsService.cancel(id, user.stellarAddress, dto.txHash);
   }
 
   /**

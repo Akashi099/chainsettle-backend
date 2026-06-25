@@ -111,6 +111,13 @@ export class CreateShipmentDto {
   tags?: string[];
 }
 
+export class CancelShipmentDto {
+  @ApiProperty({ example: 'abc123...', description: 'On-chain transaction hash of the cancel call' })
+  @IsString()
+  @IsNotEmpty()
+  txHash: string;
+}
+
 export class UpdateShipmentDto {
   @ApiProperty({ required: false, example: 'Electronics shipment from China', description: 'Human-readable description (max 1000 chars)' })
   @IsOptional()
