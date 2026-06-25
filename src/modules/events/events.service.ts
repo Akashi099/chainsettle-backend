@@ -327,8 +327,8 @@ export class EventsService implements OnModuleInit {
   }
 
   private async handleShipmentCancelled(payload: any, event: any) {
-    const [shipmentId] = Array.isArray(payload) ? payload : [payload];
-    this.logger.log(`Shipment cancelled: ${shipmentId}`);
+    const [shipmentId, refundAmount] = Array.isArray(payload) ? payload : [payload, undefined];
+    this.logger.log(`Shipment cancelled on-chain: ${shipmentId}`);
 
     try {
       // Pass null as callerAddress to bypass the buyer-only guard on the event path
