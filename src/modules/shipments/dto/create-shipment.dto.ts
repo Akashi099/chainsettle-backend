@@ -2,6 +2,8 @@ import {
   IsString,
   IsNotEmpty,
   IsArray,
+  ArrayMinSize,
+  ArrayMaxSize,
   ValidateNested,
   IsInt,
   Min,
@@ -140,4 +142,26 @@ export class UpdateShipmentDto {
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
+}
+
+export class BulkStatusDto {
+  @ApiProperty({ type: [String], example: ['SHIP-001', 'SHIP-002'], description: 'Shipment IDs to look up (1–50 items)' })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  ids: string[];
+}
+
+export class CloneShipmentDto {
+  @ApiProperty({ example: 'abc123...txhash', description: 'On-chain transaction hash for the new cloned shipment' })
+  @IsString()
+  @IsNotEmpty()
+  txHash: string;
+
+  @ApiProperty({ example: '1000000000', description: 'Total amount in stroops for the new shipment (7 decimal places)' })
+  @IsString()
+  @IsNotEmpty()
+  totalAmount: string;
 }

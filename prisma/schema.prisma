@@ -159,6 +159,7 @@ model Milestone {
   confirmedAt        DateTime?
   dueAt              DateTime?       // optional deadline for milestone completion
   overdueNotifiedAt  DateTime?       // timestamp when overdue notification was sent (prevents re-notification)
+  disputeEscalatedAt DateTime?       // set when the dispute has been escalated to admins (prevents re-escalation)
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 
