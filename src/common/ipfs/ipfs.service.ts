@@ -1,4 +1,10 @@
-import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  InternalServerErrorException,
+  OnModuleInit,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import * as FormData from 'form-data';
@@ -10,15 +16,20 @@ import * as FormData from 'form-data';
  * Falls back gracefully if keys are not configured (useful in development).
  *
  * Environment variables:
- *   IPFS_GATEWAY_URL  — Public read gateway, e.g. https://gateway.pinata.cloud/ipfs
- *   IPFS_API_KEY      — Pinata API key (JWT or v2 key)
+ *   IPFS_GATEWAY_URL               — Public read gateway, e.g. https://gateway.pinata.cloud/ipfs
+ *   IPFS_API_KEY                   — Pinata API key (JWT or v2 key)
+ *   IPFS_HEALTH_CHECK_INTERVAL_MS  — How often to re-check IPFS connectivity (default 60000ms)
  */
 @Injectable()
-export class IpfsService {
+export class IpfsService implements OnModuleInit {
   private readonly logger = new Logger(IpfsService.name);
   private readonly pinataUrl = 'https://api.pinata.cloud/pinning/pinFileToIPFS';
+  private readonly pinataTestUrl = 'https://api.pinata.cloud/data/testAuthentication';
   private readonly gateway: string;
   private readonly apiKey: string;
+  private readonly healthCheckInterval: number;
+
+  isHealthy = false;
 
   constructor(private readonly config: ConfigService) {
     this.gateway = this.config.get<string>(
@@ -26,6 +37,35 @@ export class IpfsService {
       'https://gateway.pinata.cloud/ipfs',
     );
     this.apiKey = this.config.get<string>('IPFS_API_KEY', '');
+    this.healthCheckInterval = this.config.get<number>('IPFS_HEALTH_CHECK_INTERVAL_MS', 60_000);
+  }
+
+  async onModuleInit() {
+    await this.checkConnectivity();
+
+    if (this.healthCheckInterval > 0) {
+      setInterval(() => this.checkConnectivity(), this.healthCheckInterval);
+    }
+  }
+
+  async checkConnectivity(): Promise<void> {
+    if (!this.apiKey) {
+      // Dev mode — no API key configured, treat as healthy to allow stub uploads
+      this.isHealthy = true;
+      return;
+    }
+
+    try {
+      await axios.get(this.pinataTestUrl, {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+        timeout: 5_000,
+      });
+      this.isHealthy = true;
+      this.logger.log('IPFS node reachable');
+    } catch (error) {
+      this.isHealthy = false;
+      this.logger.error(`IPFS node unreachable: ${error.message}`);
+    }
   }
 
   /**
@@ -35,6 +75,7 @@ export class IpfsService {
    * @param originalName - Original filename (for Pinata metadata)
    * @param mimeType    - MIME type of the file
    * @returns The IPFS CID (v1, base32 encoded)
+   * @throws ServiceUnavailableException when IPFS node is unreachable
    * @throws InternalServerErrorException on upload failure
    */
   async uploadFile(
@@ -49,6 +90,10 @@ export class IpfsService {
       return `bafydev${Buffer.from(originalName).toString('hex').slice(0, 52)}`;
     }
 
+    if (!this.isHealthy) {
+      throw new ServiceUnavailableException('IPFS service is currently unavailable');
+    }
+
     try {
       const form = new FormData();
       form.append('file', fileBuffer, {
@@ -56,7 +101,6 @@ export class IpfsService {
         contentType: mimeType,
       });
 
-      // Optional metadata for Pinata dashboard
       const pinataMetadata = JSON.stringify({ name: originalName });
       form.append('pinataMetadata', pinataMetadata);
 

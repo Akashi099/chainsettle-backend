@@ -4,6 +4,8 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TerminusModule } from '@nestjs/terminus';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { envValidationSchema } from './config/env.validation';
+import { RolesGuard } from './common/guards/roles.guard';
 
 import { PrismaModule } from './common/prisma/prisma.module';
 import { StellarModule } from './common/stellar/stellar.module';
@@ -29,6 +31,8 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+      validationSchema: envValidationSchema,
+      validationOptions: { abortEarly: false },
     }),
 
     // Rate limiting — protects all routes with Redis storage for multi-pod consistency
@@ -76,6 +80,11 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    // Apply global roles guard — enforces @Roles() decorator across all routes
+    {
+      provide: APP_GUARD,
+      useClass: RolesGuard,
     },
     // Apply global audit logging interceptor (logs all mutations)
     {
