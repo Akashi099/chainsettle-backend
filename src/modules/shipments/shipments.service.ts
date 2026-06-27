@@ -10,10 +10,11 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { StellarService } from '../../common/stellar/stellar.service';
 import { TokenRegistryService } from '../../common/token-registry/token-registry.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { CreateShipmentDto } from './dto/create-shipment.dto';
+import { CreateShipmentDto, CloneShipmentDto } from './dto/create-shipment.dto';
 import { CreateTrackingDto } from './dto/tracking.dto';
 import { ShipmentStatus, NotificationType, ArbiterStatus } from '@prisma/client';
 import { nativeToScVal } from '@stellar/stellar-sdk';
+import { randomUUID } from 'crypto';
 
 @Injectable()
 export class ShipmentsService {
@@ -251,6 +252,34 @@ export class ShipmentsService {
     return this.serialize(shipment);
   }
 
+  async bulkStatus(
+    ids: string[],
+    callerAddress: string,
+    isAdmin: boolean,
+  ): Promise<{ results: Record<string, ShipmentStatus> }> {
+    const where: any = { id: { in: ids } };
+
+    if (!isAdmin) {
+      where.OR = [
+        { buyerAddress: callerAddress },
+        { supplierAddress: callerAddress },
+        { logisticsAddress: callerAddress },
+        { arbiterAddress: callerAddress },
+      ];
+    }
+
+    const shipments = await this.prisma.shipment.findMany({
+      where,
+      select: { id: true, status: true },
+    });
+
+    const results: Record<string, ShipmentStatus> = {};
+    for (const s of shipments) {
+      results[s.id] = s.status;
+    }
+    return { results };
+  }
+
   /**
    * Update shipment metadata (description, referenceNumber, metadata, tags).
    * Only the buyer can update a shipment.
@@ -382,6 +411,65 @@ export class ShipmentsService {
 
     this.logger.log(`Arbiter ${callerAddress} declined assignment for shipment ${id}`);
     return this.serialize(updated);
+  }
+
+  // ----------------------------------------------------------
+  // CLONE — copy structure into a new ACTIVE shipment
+  // ----------------------------------------------------------
+
+  async clone(id: string, buyerAddress: string, dto: CloneShipmentDto) {
+    const source = await this.prisma.shipment.findUnique({
+      where: { id },
+      include: { milestones: { orderBy: { milestoneIndex: 'asc' } } },
+    });
+
+    if (!source) throw new NotFoundException(`Shipment ${id} not found`);
+
+    if (source.buyerAddress !== buyerAddress) {
+      throw new ForbiddenException('Only the original shipment buyer can clone it');
+    }
+
+    const token = this.tokenRegistry.getToken(source.tokenAddress);
+    const newId = randomUUID();
+
+    const cloned = await this.prisma.shipment.create({
+      data: {
+        id: newId,
+        buyerAddress: source.buyerAddress,
+        supplierAddress: source.supplierAddress,
+        logisticsAddress: source.logisticsAddress,
+        arbiterAddress: source.arbiterAddress,
+        tokenAddress: source.tokenAddress,
+        tokenDecimals: token.decimals,
+        tokenSymbol: token.symbol,
+        totalAmount: BigInt(dto.totalAmount),
+        txHash: dto.txHash,
+        description: source.description,
+        metadata: source.metadata ?? undefined,
+        tags: source.tags,
+        status: ShipmentStatus.ACTIVE,
+        arbiterStatus: ArbiterStatus.PENDING_ACCEPTANCE,
+        milestones: {
+          create: source.milestones.map((m, index) => ({
+            milestoneIndex: index,
+            name: m.name,
+            paymentPercent: m.paymentPercent,
+          })),
+        },
+      },
+      include: { milestones: true },
+    });
+
+    await this.notifications.notifyUser(
+      source.arbiterAddress,
+      NotificationType.ARBITER_INVITED,
+      'Arbiter assignment invitation',
+      `You have been assigned as arbiter for shipment ${cloned.id}. Please accept or decline this assignment.`,
+      { shipmentId: cloned.id, buyerAddress: source.buyerAddress, supplierAddress: source.supplierAddress },
+    );
+
+    this.logger.log(`Shipment ${id} cloned to ${cloned.id} by buyer ${buyerAddress}`);
+    return this.serialize(cloned);
   }
 
   // ----------------------------------------------------------

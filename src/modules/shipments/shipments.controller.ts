@@ -22,7 +22,7 @@ import {
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { ShipmentsService } from './shipments.service';
-import { CreateShipmentDto, UpdateShipmentDto } from './dto/create-shipment.dto';
+import { CreateShipmentDto, UpdateShipmentDto, CancelShipmentDto, CloneShipmentDto, BulkStatusDto } from './dto/create-shipment.dto';
 import { CreateTrackingDto } from './dto/tracking.dto';
 import { FindAllShipmentsDto } from './dto/find-all-shipments.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -133,6 +133,20 @@ export class ShipmentsController {
 
 
   /**
+   * POST /api/v1/shipments/bulk-status
+   * Returns a map of id → status for up to 50 shipment IDs in a single round trip.
+   * IDs the caller is not a participant of are silently omitted.
+   */
+  @Post('bulk-status')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get status for multiple shipments by ID (max 50)' })
+  @ApiResponse({ status: 200, description: 'Map of shipment id to status' })
+  bulkStatus(@Body() dto: BulkStatusDto, @CurrentUser() user: any) {
+    const isAdmin = user?.role === UserRole.ADMIN;
+    return this.shipmentsService.bulkStatus(dto.ids, user.stellarAddress, isAdmin);
+  }
+
+  /**
    * GET /api/v1/shipments/:id
    * Full shipment detail including milestones and recent on-chain events.
    */
@@ -183,6 +197,21 @@ export class ShipmentsController {
   @ApiResponse({ status: 409, description: 'Assignment already resolved' })
   arbiterDecline(@Param('id') id: string, @CurrentUser() user: any) {
     return this.shipmentsService.arbiterDecline(id, user.stellarAddress);
+  }
+
+  /**
+   * POST /api/v1/shipments/:id/clone
+   * Copies a shipment's structure into a new ACTIVE shipment with a fresh ID and reset milestones.
+   * Restricted to the original shipment's buyerAddress.
+   */
+  @Post(':id/clone')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Clone a shipment into a new active shipment (buyer only)' })
+  @ApiResponse({ status: 201, description: 'Cloned shipment created' })
+  @ApiResponse({ status: 403, description: 'Only the original buyer can clone' })
+  @ApiResponse({ status: 404, description: 'Source shipment not found' })
+  clone(@Param('id') id: string, @Body() dto: CloneShipmentDto, @CurrentUser() user: any) {
+    return this.shipmentsService.clone(id, user.stellarAddress, dto);
   }
 
   /**
