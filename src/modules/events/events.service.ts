@@ -6,6 +6,7 @@ import { StellarService } from '../../common/stellar/stellar.service';
 import { MilestonesService } from '../milestones/milestones.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ShipmentsService } from '../shipments/shipments.service';
+import { MetricsService } from '../../common/metrics/metrics.service';
 import { NotificationType } from '@prisma/client';
 
 const MAX_ATTEMPTS = 5;
@@ -36,6 +37,7 @@ export class EventsService implements OnModuleInit {
     private readonly notifications: NotificationsService,
     private readonly shipments: ShipmentsService,
     private readonly config: ConfigService,
+    private readonly metrics: MetricsService,
   ) {}
 
   async onModuleInit() {
@@ -95,6 +97,7 @@ export class EventsService implements OnModuleInit {
         try {
           await this.processEvent(event);
         } catch (error) {
+          this.metrics.incrementEventsFailed();
           await this.saveToDlq(event, error as Error);
         }
         this.lastProcessedLedger = Math.max(this.lastProcessedLedger, event.ledger + 1);
@@ -170,6 +173,7 @@ export class EventsService implements OnModuleInit {
 
     await this.saveRawEvent(eventName, event, payload);
     await this.executeHandler(eventName, payload, event);
+    this.metrics.incrementEventsProcessed(eventName);
   }
 
   private async executeHandler(eventName: string, payload: any, meta: any) {

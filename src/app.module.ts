@@ -11,6 +11,8 @@ import { RedisModule } from './common/redis/redis.module';
 import { IpfsModule } from './common/ipfs/ipfs.module';
 import { TokenRegistryModule } from './common/token-registry/token-registry.module';
 import { RedisThrottlerStorageService } from './common/throttler/redis-throttler-storage.service';
+import { MetricsModule } from './common/metrics/metrics.module';
+import { HttpMetricsInterceptor } from './common/interceptors/http-metrics.interceptor';
 
 import { AuthModule } from './modules/auth/auth.module';
 import { ShipmentsModule } from './modules/shipments/shipments.module';
@@ -59,6 +61,7 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
     RedisModule,
     IpfsModule,
     TokenRegistryModule,
+    MetricsModule,
 
     // Feature modules
     AuthModule,
@@ -81,6 +84,11 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
     {
       provide: APP_INTERCEPTOR,
       useClass: AuditLogInterceptor,
+    },
+    // Track HTTP request duration for all routes
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: HttpMetricsInterceptor,
     },
   ],
 })
