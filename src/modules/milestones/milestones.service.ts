@@ -372,4 +372,39 @@ export class MilestonesService {
       ipfsUrl: item.ipfsCid ? this.ipfs.getGatewayUrl(item.ipfsCid) : null,
     }));
   }
+
+  /**
+   * Download a dispute evidence file through the backend proxy
+   */
+  async downloadEvidence(
+    shipmentId: string,
+    milestoneIndex: number,
+    evidenceId: string,
+  ): Promise<{ fileBuffer: Buffer; fileName: string; mimeType: string }> {
+    const milestone = await this.prisma.milestone.findUnique({
+      where: { shipmentId_milestoneIndex: { shipmentId, milestoneIndex } },
+    });
+
+    if (!milestone) {
+      throw new NotFoundException(
+        `Milestone ${milestoneIndex} not found on shipment ${shipmentId}`
+      );
+    }
+
+    const evidence = await this.prisma.disputeEvidence.findUnique({
+      where: { id: evidenceId, milestoneId: milestone.id },
+    });
+
+    if (!evidence || !evidence.ipfsCid) {
+      throw new NotFoundException('Evidence not found or no file attached');
+    }
+
+    const fileBuffer = await this.ipfs.getFile(evidence.ipfsCid);
+
+    return {
+      fileBuffer,
+      fileName: evidence.fileName || 'download',
+      mimeType: evidence.mimeType || 'application/octet-stream',
+    };
+  }
 }
