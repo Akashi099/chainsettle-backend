@@ -18,6 +18,7 @@ import {
   ApiTags,
   ApiOperation,
   ApiResponse,
+  ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -268,6 +269,4 @@ export class ShipmentsController {
     getTracking(@Param('id') id: string, @CurrentUser() user: any) {
       return this.shipmentsService.getTracking(id, user.stellarAddress);
     }
-  }
-}
 }
