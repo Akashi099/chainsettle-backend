@@ -130,6 +130,7 @@ model Shipment {
 
   cancelledAt      DateTime?       // set when shipment is cancelled
   refundTxHash     String?         // on-chain tx hash of the cancel/refund transaction
+  archivedAt       DateTime?       // set when buyer archives a completed/cancelled shipment
 
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
@@ -350,6 +351,17 @@ model WebhookDelivery {
   @@index([endpointId])
   @@index([nextRetryAt])
   @@map("webhook_deliveries")
+}
+
+model ReconciliationRun {
+  id            String    @id @default(uuid())
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  checkedCount  Int       @default(0)
+  mismatchCount Int       @default(0)
+  errors        Json?
+
+  @@map("reconciliation_runs")
 }
 
 model ShipmentTemplate {

@@ -167,6 +167,7 @@ export class ShipmentsService {
     updatedBefore?: string;
     callerStellarAddress?: string;
     isAdmin?: boolean;
+    includeArchived?: boolean;
   }) {
     const {
       buyerAddress,
@@ -182,6 +183,7 @@ export class ShipmentsService {
       updatedBefore,
       callerStellarAddress,
       isAdmin = false,
+      includeArchived = false,
     } = filters;
 
     const where: any = {};
@@ -207,6 +209,10 @@ export class ShipmentsService {
         ...(updatedAfter && { gte: new Date(updatedAfter) }),
         ...(updatedBefore && { lte: new Date(updatedBefore) }),
       };
+    }
+
+    if (!includeArchived) {
+      where.archivedAt = null;
     }
 
     // Scope to shipments where the caller is a participant (buyer/supplier/logistics/arbiter)
@@ -470,6 +476,80 @@ export class ShipmentsService {
 
     this.logger.log(`Shipment ${id} cloned to ${cloned.id} by buyer ${buyerAddress}`);
     return this.serialize(cloned);
+  }
+
+  // ----------------------------------------------------------
+  // ARCHIVE / UNARCHIVE — hide completed/cancelled shipments
+  // ----------------------------------------------------------
+
+  async archive(id: string, buyerAddress: string) {
+    const shipment = await this.prisma.shipment.findUnique({ where: { id } });
+    if (!shipment) throw new NotFoundException(`Shipment ${id} not found`);
+    if (shipment.buyerAddress !== buyerAddress) {
+      throw new ForbiddenException('Only the shipment buyer can archive it');
+    }
+    if (shipment.status === ShipmentStatus.ACTIVE) {
+      throw new ConflictException('Only COMPLETED or CANCELLED shipments can be archived');
+    }
+    if (shipment.archivedAt) {
+      throw new ConflictException('Shipment is already archived');
+    }
+
+    const updated = await this.prisma.shipment.update({
+      where: { id },
+      data: { archivedAt: new Date() },
+      include: { milestones: { orderBy: { milestoneIndex: 'asc' } } },
+    });
+
+    this.logger.log(`Shipment ${id} archived by buyer ${buyerAddress}`);
+    return this.serialize(updated);
+  }
+
+  async unarchive(id: string, buyerAddress: string) {
+    const shipment = await this.prisma.shipment.findUnique({ where: { id } });
+    if (!shipment) throw new NotFoundException(`Shipment ${id} not found`);
+    if (shipment.buyerAddress !== buyerAddress) {
+      throw new ForbiddenException('Only the shipment buyer can unarchive it');
+    }
+    if (!shipment.archivedAt) {
+      throw new ConflictException('Shipment is not archived');
+    }
+
+    const updated = await this.prisma.shipment.update({
+      where: { id },
+      data: { archivedAt: null },
+      include: { milestones: { orderBy: { milestoneIndex: 'asc' } } },
+    });
+
+    this.logger.log(`Shipment ${id} unarchived by buyer ${buyerAddress}`);
+    return this.serialize(updated);
+  }
+
+  // ----------------------------------------------------------
+  // MY ROLE — return the caller's participant role
+  // ----------------------------------------------------------
+
+  async getCallerRole(id: string, stellarAddress: string, isAdmin: boolean) {
+    if (isAdmin) return { role: 'ADMIN' };
+
+    const shipment = await this.prisma.shipment.findUnique({
+      where: { id },
+      select: {
+        buyerAddress: true,
+        supplierAddress: true,
+        logisticsAddress: true,
+        arbiterAddress: true,
+      },
+    });
+
+    if (!shipment) throw new NotFoundException(`Shipment ${id} not found`);
+
+    if (stellarAddress === shipment.buyerAddress) return { role: 'BUYER' };
+    if (stellarAddress === shipment.supplierAddress) return { role: 'SUPPLIER' };
+    if (stellarAddress === shipment.logisticsAddress) return { role: 'LOGISTICS' };
+    if (stellarAddress === shipment.arbiterAddress) return { role: 'ARBITER' };
+
+    return { role: null };
   }
 
   // ----------------------------------------------------------

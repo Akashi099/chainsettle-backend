@@ -93,6 +93,7 @@ export class ShipmentsController {
       updatedBefore: query.updatedBefore,
       callerStellarAddress: user?.stellarAddress,
       isAdmin,
+      includeArchived: query.includeArchived,
     });
   }
 
@@ -229,45 +230,84 @@ export class ShipmentsController {
   }
 
   /**
+   * POST /api/v1/shipments/:id/archive
+   * Archive a completed/cancelled shipment to hide it from default listings (buyer only).
+   */
+  @Post(':id/archive')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Archive a completed/cancelled shipment (buyer only)' })
+  @ApiResponse({ status: 200, description: 'Shipment archived' })
+  @ApiResponse({ status: 403, description: 'Only the buyer can archive' })
+  @ApiResponse({ status: 409, description: 'Only COMPLETED or CANCELLED shipments can be archived' })
+  archive(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.shipmentsService.archive(id, user.stellarAddress);
+  }
+
+  /**
+   * POST /api/v1/shipments/:id/unarchive
+   * Restore an archived shipment to the default listing (buyer only).
+   */
+  @Post(':id/unarchive')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Unarchive a shipment (buyer only)' })
+  @ApiResponse({ status: 200, description: 'Shipment unarchived' })
+  @ApiResponse({ status: 403, description: 'Only the buyer can unarchive' })
+  @ApiResponse({ status: 409, description: 'Shipment is not archived' })
+  unarchive(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.shipmentsService.unarchive(id, user.stellarAddress);
+  }
+
+  /**
+   * GET /api/v1/shipments/:id/my-role
+   * Return the caller's participant role without exposing full shipment data.
+   * Non-participants receive { role: null } with 200 instead of 403.
+   */
+  @Get(':id/my-role')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Get the caller's participant role for a shipment" })
+  @ApiResponse({ status: 200, description: "Role: BUYER | SUPPLIER | LOGISTICS | ARBITER | ADMIN | null" })
+  myRole(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.shipmentsService.getCallerRole(id, user.stellarAddress, user.role === UserRole.ADMIN);
+  }
+
+  /**
    * POST /api/v1/shipments/:id/sync
    */
-    @Post(':id/sync')
-    @UseGuards(ShipmentParticipantGuard)
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({ summary: 'Force sync shipment status from Stellar chain' })
-    sync(@Param('id') id: string) {
-      return this.shipmentsService.syncStatusFromChain(id);
-    }
-
-    /**
-     * POST /api/v1/shipments/:id/tracking
-     * Submit a tracking update (location, status, ETA). Restricted to logistics participant.
-     * Tracking updates are immutable after submission.
-     */
-    @Post(':id/tracking')
-    @HttpCode(HttpStatus.CREATED)
-    @ApiOperation({ summary: 'Submit a tracking update for a shipment (logistics only)' })
-    @ApiResponse({ status: 201, description: 'Tracking update created' })
-    @ApiResponse({ status: 403, description: 'Only logistics participant can submit' })
-    @ApiResponse({ status: 404, description: 'Shipment not found' })
-    createTracking(@Param('id') id: string, @Body() dto: CreateTrackingDto, @CurrentUser() user: any) {
-      return this.shipmentsService.createTracking(id, user.stellarAddress, dto);
-    }
-
-    /**
-     * GET /api/v1/shipments/:id/tracking
-     * Get all tracking updates for a shipment in chronological order.
-     * Restricted to shipment participants.
-     */
-    @Get(':id/tracking')
-    @UseGuards(ShipmentParticipantGuard)
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({ summary: 'Get all tracking updates for a shipment in chronological order' })
-    @ApiResponse({ status: 200, description: 'Tracking updates retrieved' })
-    @ApiResponse({ status: 403, description: 'Not a shipment participant' })
-    getTracking(@Param('id') id: string, @CurrentUser() user: any) {
-      return this.shipmentsService.getTracking(id, user.stellarAddress);
-    }
+  @Post(':id/sync')
+  @UseGuards(ShipmentParticipantGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Force sync shipment status from Stellar chain' })
+  sync(@Param('id') id: string) {
+    return this.shipmentsService.syncStatusFromChain(id);
   }
-}
+
+  /**
+   * POST /api/v1/shipments/:id/tracking
+   * Submit a tracking update (location, status, ETA). Restricted to logistics participant.
+   * Tracking updates are immutable after submission.
+   */
+  @Post(':id/tracking')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Submit a tracking update for a shipment (logistics only)' })
+  @ApiResponse({ status: 201, description: 'Tracking update created' })
+  @ApiResponse({ status: 403, description: 'Only logistics participant can submit' })
+  @ApiResponse({ status: 404, description: 'Shipment not found' })
+  createTracking(@Param('id') id: string, @Body() dto: CreateTrackingDto, @CurrentUser() user: any) {
+    return this.shipmentsService.createTracking(id, user.stellarAddress, dto);
+  }
+
+  /**
+   * GET /api/v1/shipments/:id/tracking
+   * Get all tracking updates for a shipment in chronological order.
+   * Restricted to shipment participants.
+   */
+  @Get(':id/tracking')
+  @UseGuards(ShipmentParticipantGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get all tracking updates for a shipment in chronological order' })
+  @ApiResponse({ status: 200, description: 'Tracking updates retrieved' })
+  @ApiResponse({ status: 403, description: 'Not a shipment participant' })
+  getTracking(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.shipmentsService.getTracking(id, user.stellarAddress);
+  }
 }
