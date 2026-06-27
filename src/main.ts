@@ -8,9 +8,31 @@ import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ThrottlerExceptionFilter } from './common/filters/throttler-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { requestIdStorage } from './common/middleware/request-id.middleware';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
+
+  // Patch NestJS Logger to prepend [req-id] when inside a request context
+  const originalLog = Logger.prototype.log;
+  const originalWarn = Logger.prototype.warn;
+  const originalError = Logger.prototype.error;
+
+  Logger.prototype.log = function (message: any, ...args: any[]) {
+    const reqId = requestIdStorage.getStore();
+    originalLog.call(this, reqId ? `[${reqId}] ${message}` : message, ...args);
+  };
+
+  Logger.prototype.warn = function (message: any, ...args: any[]) {
+    const reqId = requestIdStorage.getStore();
+    originalWarn.call(this, reqId ? `[${reqId}] ${message}` : message, ...args);
+  };
+
+  Logger.prototype.error = function (message: any, ...args: any[]) {
+    const reqId = requestIdStorage.getStore();
+    originalError.call(this, reqId ? `[${reqId}] ${message}` : message, ...args);
+  };
+
   const app = await NestFactory.create(AppModule);
 
   // Use Socket.io adapter for WebSocket gateways
@@ -29,7 +51,6 @@ async function bootstrap() {
   const fallbackOrigin = configService.get<string>('CORS_ORIGIN', 'http://localhost:5173');
 
   // Helmet — tuned for production security headers.
-  // Note: `helmet()` already sets X-Powered-By removal for Express, but we also explicitly disable it below.
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -57,17 +78,17 @@ async function bootstrap() {
   }
 
   // CORS — strict origin allowlist.
-  // Cross-origin credentials are allowed only for configured origins.
+  // X-Request-ID is exposed so clients can read it back for tracing.
   app.enableCors({
     origin:
       allowedOrigins && allowedOrigins.length > 0
         ? allowedOrigins
         : [fallbackOrigin],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
+    exposedHeaders: ['X-Request-ID'],
     credentials: true,
   });
-
 
   // Global prefix for all routes
   app.setGlobalPrefix(apiPrefix);
@@ -75,12 +96,11 @@ async function bootstrap() {
   // Global validation pipe — safely auto-validates and transforms all incoming DTO inputs
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true, // strip out all non-whitelisted fields sent in requests
-      forbidNonWhitelisted: true, // reject requests with unknown properties
-      transform: true, // automatically transform plain objects to type-instantiated DTO classes
-      transformOptions: { enableImplicitConversion: true }, // ensures query strings safely cast into expected primitive types
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      transformOptions: { enableImplicitConversion: true },
     }),
-
   );
 
   // Global exception filter — standardised error responses
