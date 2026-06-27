@@ -1,4 +1,4 @@
-gimport { Injectable, UnauthorizedException, ConflictException, Logger } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, NotFoundException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Keypair } from '@stellar/stellar-sdk';
@@ -123,6 +123,15 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
+    return user;
+  }
+
+  async getPublicProfile(stellarAddress: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { stellarAddress },
+      select: { stellarAddress: true, name: true, role: true, createdAt: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
     return user;
   }
 

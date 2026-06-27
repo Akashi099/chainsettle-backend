@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Patch, Body, Param, BadRequestException, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -27,5 +27,17 @@ export class UsersController {
   @ApiResponse({ status: 409, description: 'Email already in use' })
   updateProfile(@CurrentUser() user: any, @Body() dto: UpdateProfileDto) {
     return this.authService.updateProfile(user.id, dto);
+  }
+
+  @Get(':stellarAddress')
+  @ApiOperation({ summary: 'Get public profile by Stellar address' })
+  @ApiResponse({ status: 200, description: 'Returns public profile' })
+  @ApiResponse({ status: 400, description: 'Invalid Stellar address format' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  getPublicProfile(@Param('stellarAddress') stellarAddress: string) {
+    if (!/^G[A-Z2-7]{55}$/.test(stellarAddress)) {
+      throw new BadRequestException('Invalid Stellar address format');
+    }
+    return this.authService.getPublicProfile(stellarAddress);
   }
 }

@@ -1,7 +1,9 @@
 import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createHash } from 'crypto';
 import axios from 'axios';
 import * as FormData from 'form-data';
+import { RedisService } from '../redis/redis.service';
 
 /**
  * IpfsService
@@ -20,7 +22,10 @@ export class IpfsService {
   private readonly gateway: string;
   private readonly apiKey: string;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly redis: RedisService,
+  ) {
     this.gateway = this.config.get<string>(
       'IPFS_GATEWAY_URL',
       'https://gateway.pinata.cloud/ipfs',
@@ -42,6 +47,14 @@ export class IpfsService {
     originalName: string,
     mimeType: string,
   ): Promise<string> {
+    const hash = createHash('sha256').update(fileBuffer).digest('hex');
+    const dedupKey = `ipfs:dedup:${hash}`;
+    const cached = await this.redis.get(dedupKey);
+    if (cached) {
+      this.logger.debug('IPFS dedup hit: returning cached CID');
+      return cached;
+    }
+
     if (!this.apiKey) {
       this.logger.warn(
         'IPFS_API_KEY not configured — returning stub CID for development',
@@ -75,6 +88,8 @@ export class IpfsService {
 
       const cid = response.data.IpfsHash;
       this.logger.log(`File pinned to IPFS: ${cid} (${originalName})`);
+      const ttlDays = this.config.get<number>('IPFS_DEDUP_TTL_DAYS', 30);
+      await this.redis.set(dedupKey, cid, ttlDays * 86400);
       return cid;
     } catch (error) {
       const detail = error.response?.data?.error?.details ?? error.message;

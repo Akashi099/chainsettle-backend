@@ -22,6 +22,7 @@ import { HealthModule } from './modules/health/health.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { AuditLogInterceptor } from './modules/audit-logs/audit-log.interceptor';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
+import { ChainModule } from './modules/chain/chain.module';
 
 @Module({
   imports: [
@@ -70,6 +71,7 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
     HealthModule,
     AuditLogsModule,
     WebhooksModule,
+    ChainModule,
   ],
   providers: [
     // Apply global throttler guard (can be overridden per route)
