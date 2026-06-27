@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Param,
+  Body,
   ParseIntPipe,
   UseGuards,
   UseInterceptors,
@@ -22,6 +23,7 @@ import {
 } from '@nestjs/swagger';
 import { memoryStorage } from 'multer';
 import { MilestonesService } from './milestones.service';
+import { ConfirmMilestoneDto } from './dto/confirm-milestone.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
@@ -152,6 +154,39 @@ export class MilestonesController {
       index,
       callerAddress,
       file,
+    );
+  }
+
+  /**
+   * POST /api/v1/shipments/:shipmentId/milestones/:index/confirm
+   *
+   * Buyer registers a milestone confirmation transaction hash after
+   * signing it in Freighter. Restricted to the shipment's buyerAddress.
+   */
+  @Post(':index/confirm')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Confirm a milestone from the buyer wallet',
+    description:
+      "Registers the confirm_milestone transaction hash signed in Freighter. Only the shipment's buyerAddress may call this endpoint.",
+  })
+  @ApiResponse({ status: 200, description: 'Milestone confirmed' })
+  @ApiResponse({ status: 403, description: 'Caller is not the buyer' })
+  @ApiResponse({ status: 409, description: 'Milestone is not in PROOF_SUBMITTED status' })
+  confirmMilestone(
+    @Param('shipmentId') shipmentId: string,
+    @Param('index', ParseIntPipe) index: number,
+    @CurrentUser() user: any,
+    @Body() dto: ConfirmMilestoneDto,
+  ) {
+    const callerAddress: string = user?.stellarAddress ?? user?.sub;
+
+    return this.milestonesService.confirmFromApi(
+      shipmentId,
+      index,
+      callerAddress,
+      dto.txHash,
+      dto.paymentReleased,
     );
   }
 }
