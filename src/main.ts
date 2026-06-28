@@ -9,10 +9,24 @@ import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ThrottlerExceptionFilter } from './common/filters/throttler-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { createWinstonLogger } from './common/logger/winston.logger';
 
 async function bootstrap() {
-  const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule);
+  const winstonLogger = createWinstonLogger();
+
+  process.on('uncaughtException', (err) => {
+    winstonLogger.error(`Uncaught exception: ${err.message}`, err.stack, 'UncaughtException');
+  });
+  process.on('unhandledRejection', (reason: any) => {
+    winstonLogger.error(
+      `Unhandled rejection: ${reason?.message ?? reason}`,
+      reason?.stack,
+      'UnhandledRejection',
+    );
+  });
+
+  const app = await NestFactory.create(AppModule, { logger: winstonLogger });
+  const logger = winstonLogger;
 
   // Use Socket.io adapter for WebSocket gateways
   app.useWebSocketAdapter(new IoAdapter(app));

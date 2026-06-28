@@ -93,11 +93,17 @@ export class FindAllShipmentsDto {
   @IsISO8601()
   updatedAfter?: string;
 
-  @ApiPropertyOptional({ 
-    description: 'Filter shipments updated on or before this ISO date', 
-    example: '2026-03-31T23:59:59.999Z' 
+  @ApiPropertyOptional({
+    description: 'Filter shipments updated on or before this ISO date',
+    example: '2026-03-31T23:59:59.999Z'
   })
   @IsOptional()
   @IsISO8601()
   updatedBefore?: string;
+
+  @ApiPropertyOptional({ description: 'Include archived shipments in results (default: false)' })
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => value === 'true' || value === true)
+  includeArchived?: boolean;
 }
