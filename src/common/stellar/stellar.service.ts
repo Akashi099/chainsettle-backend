@@ -205,4 +205,23 @@ export class StellarService implements OnModuleInit {
     const info = await this.rpcClient.getLatestLedger();
     return info.sequence;
   }
-}
+
+  /**
+   * Fetches metadata for a specific ledger sequence number via the Stellar RPC.
+   * Returns { sequence, closedAt, txCount, baseFee } or null if not found.
+   */
+  async getLedger(sequence: number): Promise<{ sequence: number; closedAt: string; txCount: number; baseFee: number } | null> {
+    try {
+      const result = await (this.rpcClient as any).getLedger({ ledgerSeq: sequence });
+      if (!result) return null;
+      return {
+        sequence: result.sequence ?? sequence,
+        closedAt: result.closedAt ?? result.closed_at ?? '',
+        txCount: result.txCount ?? result.tx_count ?? 0,
+        baseFee: result.baseFee ?? result.base_fee ?? 0,
+      };
+    } catch (error) {
+      this.logger.error(`getLedger(${sequence}) failed`, error.message);
+      return null;
+    }
+  }

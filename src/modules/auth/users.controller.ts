@@ -30,6 +30,16 @@ export class UsersController {
     return this.authService.updateProfile(user.id, dto);
   }
 
+  @Get(':stellarAddress')
+  @ApiOperation({ summary: 'Get public profile by Stellar address' })
+  @ApiResponse({ status: 200, description: 'Returns public profile' })
+  @ApiResponse({ status: 400, description: 'Invalid Stellar address format' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  getPublicProfile(@Param('stellarAddress') stellarAddress: string) {
+    if (!/^G[A-Z2-7]{55}$/.test(stellarAddress)) {
+      throw new BadRequestException('Invalid Stellar address format');
+    }
+    return this.authService.getPublicProfile(stellarAddress);
   @Patch('admin/:id/role')
   @ApiOperation({ summary: "[Admin] Change a user's role" })
   @ApiResponse({ status: 200, description: 'Updated user profile' })

@@ -51,6 +51,18 @@ export class EventsController {
     return this.eventsService.getAdminFailedEvents(page, limit);
   }
 
+  @Get('admin/failed-events/:id')
+  @ApiOperation({ summary: '[Admin] Get a single failed DLQ event by ID' })
+  async getFailedEventById(@Param('id') id: string, @CurrentUser() user: any) {
+    this.requireAdmin(user);
+    try {
+      return await this.eventsService.getFailedEventById(id);
+    } catch (error) {
+      if ((error as any).code === 'P2025') {
+        throw new NotFoundException(`Failed event ${id} not found`);
+      }
+      throw error;
+    }
   @Get('admin/cursor')
   @ApiOperation({ summary: '[Admin] Inspect event poller cursor lag and health' })
   getCursorStatus(@CurrentUser() user: any) {

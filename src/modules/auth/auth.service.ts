@@ -129,6 +129,15 @@ export class AuthService {
     return user;
   }
 
+  async getPublicProfile(stellarAddress: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { stellarAddress },
+      select: { stellarAddress: true, name: true, role: true, createdAt: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return user;
+  }
+
   async updateProfile(userId: string, dto: UpdateProfileDto) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
 

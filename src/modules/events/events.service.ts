@@ -454,6 +454,10 @@ export class EventsService implements OnModuleInit {
     this.logger.log(`Admin manually retried and resolved failed event ${id}`);
   }
 
+  async getFailedEventById(id: string) {
+    return this.prisma.failedEvent.findUniqueOrThrow({ where: { id } });
+  }
+
   // ----------------------------------------------------------
   // READ ENDPOINTS (for EventsController)
   // ----------------------------------------------------------
