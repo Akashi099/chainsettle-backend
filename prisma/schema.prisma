@@ -99,6 +99,7 @@ model User {
   trackingUpdates    TrackingUpdate[]
   shipmentTemplates  ShipmentTemplate[] @relation("ShipmentTemplates")
   webhookEndpoints      WebhookEndpoint[]
+  apiKeys     ApiKey[]
   notificationPreference NotificationPreference?
 
   @@map("users")
@@ -130,6 +131,7 @@ model Shipment {
 
   cancelledAt      DateTime?       // set when shipment is cancelled
   refundTxHash     String?         // on-chain tx hash of the cancel/refund transaction
+  archivedAt       DateTime?       // set when buyer archives a completed/cancelled shipment
 
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
@@ -159,6 +161,7 @@ model Milestone {
   confirmedAt        DateTime?
   dueAt              DateTime?       // optional deadline for milestone completion
   overdueNotifiedAt  DateTime?       // timestamp when overdue notification was sent (prevents re-notification)
+  overdueReminder3dAt DateTime?       // timestamp when 3-day escalation notification was sent
   disputeEscalatedAt DateTime?       // set when the dispute has been escalated to admins (prevents re-escalation)
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
@@ -230,6 +233,14 @@ model Notification {
   @@index([userId])
   @@index([read])
   @@map("notifications")
+}
+
+model EventCursor {
+  id                  String   @id
+  lastProcessedLedger Int
+  updatedAt           DateTime @updatedAt
+
+  @@map("event_cursors")
 }
 
 model FailedEvent {
@@ -352,6 +363,17 @@ model WebhookDelivery {
   @@map("webhook_deliveries")
 }
 
+model ReconciliationRun {
+  id            String    @id @default(uuid())
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  checkedCount  Int       @default(0)
+  mismatchCount Int       @default(0)
+  errors        Json?
+
+  @@map("reconciliation_runs")
+}
+
 model ShipmentTemplate {
   id                String   @id @default(uuid())
   ownerId           String
@@ -374,3 +396,18 @@ model ShipmentTemplate {
   @@map("shipment_templates")
 }
 
+model ApiKey {
+  id          String    @id @default(uuid())
+  userId      String
+  keyHash     String    @unique  // SHA-256 hash of the plaintext key
+  name        String             // human label e.g. "CI Pipeline"
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  revokedAt   DateTime?          // null = active, set = revoked
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([keyHash])
+  @@index([userId])
+  @@map("api_keys")
+}

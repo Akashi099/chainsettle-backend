@@ -11,6 +11,8 @@ import { RedisModule } from './common/redis/redis.module';
 import { IpfsModule } from './common/ipfs/ipfs.module';
 import { TokenRegistryModule } from './common/token-registry/token-registry.module';
 import { RedisThrottlerStorageService } from './common/throttler/redis-throttler-storage.service';
+import { MetricsModule } from './common/metrics/metrics.module';
+import { HttpMetricsInterceptor } from './common/interceptors/http-metrics.interceptor';
 
 import { AuthModule } from './modules/auth/auth.module';
 import { ShipmentsModule } from './modules/shipments/shipments.module';
@@ -23,6 +25,7 @@ import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { AuditLogInterceptor } from './modules/audit-logs/audit-log.interceptor';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
+import { ChainModule } from './modules/chain/chain.module';
 
 @Module({
   imports: [
@@ -60,6 +63,7 @@ import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
     RedisModule,
     IpfsModule,
     TokenRegistryModule,
+    MetricsModule,
 
     // Feature modules
     AuthModule,
@@ -71,6 +75,7 @@ import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
     HealthModule,
     AuditLogsModule,
     WebhooksModule,
+    ChainModule,
   ],
   providers: [
     // Apply global throttler guard (can be overridden per route)
@@ -82,6 +87,11 @@ import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
     {
       provide: APP_INTERCEPTOR,
       useClass: AuditLogInterceptor,
+    },
+    // Track HTTP request duration for all routes
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: HttpMetricsInterceptor,
     },
   ],
 })

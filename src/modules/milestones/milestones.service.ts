@@ -9,6 +9,7 @@ import {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { IpfsService } from '../../common/ipfs/ipfs.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ShipmentsService } from '../shipments/shipments.service';
 import { MilestoneStatus, NotificationType, DisputeRole, ArbiterStatus } from '@prisma/client';
 
 @Injectable()
@@ -19,6 +20,7 @@ export class MilestonesService {
     private readonly prisma: PrismaService,
     private readonly ipfs: IpfsService,
     private readonly notifications: NotificationsService,
+    private readonly shipments: ShipmentsService,
   ) {}
 
   async findByShipment(shipmentId: string) {
@@ -114,6 +116,55 @@ export class MilestonesService {
       cid,
       gatewayUrl: this.ipfs.getGatewayUrl(cid),
     };
+  }
+
+  /**
+   * Buyer registers a milestone confirmation transaction hash after signing
+   * it in Freighter. Mirrors the on-chain `handleMilestoneConfirmed` event
+   * handler so the DB reflects the confirmation immediately.
+   *
+   * Restricted to the shipment's buyerAddress.
+   */
+  async confirmFromApi(
+    shipmentId: string,
+    milestoneIndex: number,
+    callerAddress: string,
+    txHash: string,
+    paymentReleased: string,
+  ) {
+    const shipment = await this.prisma.shipment.findUnique({
+      where: { id: shipmentId },
+    });
+
+    if (!shipment) {
+      throw new NotFoundException(`Shipment ${shipmentId} not found`);
+    }
+
+    if (shipment.buyerAddress !== callerAddress) {
+      throw new ForbiddenException('Only the shipment buyer may confirm milestones');
+    }
+
+    const milestone = await this.findOne(shipmentId, milestoneIndex);
+
+    if (milestone.status !== MilestoneStatus.PROOF_SUBMITTED) {
+      throw new ConflictException(
+        `Milestone ${milestoneIndex} must be in PROOF_SUBMITTED status to confirm (currently ${milestone.status})`,
+      );
+    }
+
+    const updated = await this.markConfirmed(shipmentId, milestoneIndex, BigInt(paymentReleased));
+
+    await this.shipments.syncStatusFromChain(shipmentId);
+
+    await this.notifications.notifyUser(
+      shipment.supplierAddress,
+      NotificationType.PAYMENT_RELEASED,
+      'Payment released',
+      `Payment has been released for milestone ${milestoneIndex} on shipment ${shipmentId}. Tx: ${txHash}`,
+      { shipmentId, milestoneIndex, paymentReleased, txHash },
+    );
+
+    return updated;
   }
 
   // ----------------------------------------------------------
@@ -371,5 +422,40 @@ export class MilestonesService {
       ...item,
       ipfsUrl: item.ipfsCid ? this.ipfs.getGatewayUrl(item.ipfsCid) : null,
     }));
+  }
+
+  /**
+   * Download a dispute evidence file through the backend proxy
+   */
+  async downloadEvidence(
+    shipmentId: string,
+    milestoneIndex: number,
+    evidenceId: string,
+  ): Promise<{ fileBuffer: Buffer; fileName: string; mimeType: string }> {
+    const milestone = await this.prisma.milestone.findUnique({
+      where: { shipmentId_milestoneIndex: { shipmentId, milestoneIndex } },
+    });
+
+    if (!milestone) {
+      throw new NotFoundException(
+        `Milestone ${milestoneIndex} not found on shipment ${shipmentId}`
+      );
+    }
+
+    const evidence = await this.prisma.disputeEvidence.findUnique({
+      where: { id: evidenceId, milestoneId: milestone.id },
+    });
+
+    if (!evidence || !evidence.ipfsCid) {
+      throw new NotFoundException('Evidence not found or no file attached');
+    }
+
+    const fileBuffer = await this.ipfs.getFile(evidence.ipfsCid);
+
+    return {
+      fileBuffer,
+      fileName: evidence.fileName || 'download',
+      mimeType: evidence.mimeType || 'application/octet-stream',
+    };
   }
 }
