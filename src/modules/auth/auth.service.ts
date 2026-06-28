@@ -2,11 +2,13 @@ import { Injectable, UnauthorizedException, ConflictException, Logger } from '@n
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Keypair } from '@stellar/stellar-sdk';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RedisService } from '../../common/redis/redis.service';
 import { LoginDto } from './dto/login.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AuditLogService } from '../audit-logs/audit-log.service';
 
 
 
@@ -37,6 +39,7 @@ export class AuthService {
     private readonly redis: RedisService,
     private readonly config: ConfigService,
     private readonly notifications: NotificationsService,
+    private readonly auditLog: AuditLogService,
   ) { }
 
   // ----------------------------------------------------------
@@ -172,6 +175,33 @@ export class AuthService {
     }
 
     return this.getProfile(userId);
+  }
+
+  async updateUserRole(id: string, callerId: string, callerAddress: string, newRole: UserRole) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    if (id === callerId && newRole !== UserRole.ADMIN) {
+      throw new ConflictException('Admins cannot demote themselves');
+    }
+
+    const oldRole = user.role;
+
+    await this.prisma.user.update({ where: { id }, data: { role: newRole } });
+
+    await this.auditLog.record({
+      actorId: callerId,
+      actorAddress: callerAddress,
+      action: 'USER_ROLE_CHANGED',
+      resourceType: 'User',
+      resourceId: id,
+      metadata: { from: oldRole, to: newRole },
+    });
+
+    return this.getProfile(id);
   }
 
   async verifyEmail(token: string) {

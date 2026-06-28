@@ -51,6 +51,13 @@ export class EventsController {
     return this.eventsService.getAdminFailedEvents(page, limit);
   }
 
+  @Get('admin/cursor')
+  @ApiOperation({ summary: '[Admin] Inspect event poller cursor lag and health' })
+  getCursorStatus(@CurrentUser() user: any) {
+    this.requireAdmin(user);
+    return this.eventsService.getCursorStatus();
+  }
+
   @Post('admin/failed-events/:id/retry')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '[Admin] Manually retry a failed event by ID' })

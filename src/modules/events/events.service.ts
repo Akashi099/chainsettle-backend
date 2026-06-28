@@ -241,6 +241,24 @@ export class EventsService implements OnModuleInit {
       ? payload
       : [payload, 0, 0];
 
+    // The buyer may have already registered this confirmation via
+    // POST /shipments/:id/milestones/:index/confirm — skip to avoid
+    // double-notifying the supplier once the on-chain event arrives.
+    const existing = await this.prisma.milestone.findUnique({
+      where: {
+        shipmentId_milestoneIndex: {
+          shipmentId: String(shipmentId),
+          milestoneIndex: Number(milestoneIndex),
+        },
+      },
+    });
+    if (existing?.status === 'CONFIRMED') {
+      this.logger.debug(
+        `Milestone ${shipmentId}[${milestoneIndex}] already confirmed — skipping duplicate event`,
+      );
+      return;
+    }
+
     this.logger.log(
       `Milestone confirmed: ${shipmentId}[${milestoneIndex}] — ${paymentAmount} released`,
     );
@@ -488,6 +506,25 @@ export class EventsService implements OnModuleInit {
         limit,
         totalPages: Math.ceil(total / limit)
       } 
+    };
+  }
+
+  /**
+   * Admin diagnostics: compares the in-memory cursor against the
+   * DB-persisted one and the live chain tip to surface poller lag.
+   */
+  async getCursorStatus() {
+    const persisted = await this.prisma.eventCursor.findUnique({ where: { id: 'main' } });
+    const chainTip = await this.stellar.getLatestLedger();
+    const lag = chainTip - this.lastProcessedLedger;
+
+    return {
+      inMemoryLedger: this.lastProcessedLedger,
+      persistedLedger: persisted?.lastProcessedLedger ?? null,
+      chainTip,
+      lag,
+      updatedAt: persisted?.updatedAt ?? null,
+      healthy: lag <= 100,
     };
   }
 

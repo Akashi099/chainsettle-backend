@@ -180,6 +180,7 @@ export class ShipmentsService {
     updatedBefore?: string;
     callerStellarAddress?: string;
     isAdmin?: boolean;
+    search?: string;
   }) {
     const {
       buyerAddress,
@@ -195,6 +196,7 @@ export class ShipmentsService {
       updatedBefore,
       callerStellarAddress,
       isAdmin = false,
+      search,
     } = filters;
 
     const where: any = {};
@@ -235,13 +237,45 @@ export class ShipmentsService {
       });
     }
 
-    // Admins bypass caching (too many varied queries)
-    if (!isAdmin && callerStellarAddress) {
-      const cacheKey = this.buildCacheKey(callerStellarAddress, filters);
-      const cached = await this.redis.getJson<{ data: any[]; meta: any }>(cacheKey);
-      if (cached) return cached;
+    let shipments, total;
 
-      const [shipments, total] = await this.prisma.$transaction([
+    if (search) {
+      const searchWhere = { ...where };
+      delete searchWhere.AND;
+      const participantCondition = !isAdmin && callerStellarAddress ? 
+        `AND (buyer_address = $1 OR supplier_address = $1 OR logistics_address = $1 OR arbiter_address = $1)` : '';
+      const participantParams = !isAdmin && callerStellarAddress ? [callerStellarAddress] : [];
+      
+      const query = `
+        SELECT * FROM shipments 
+        WHERE description_search @@ plainto_tsquery('english', $2)
+        ${participantCondition}
+        ORDER BY created_at DESC
+        LIMIT $3 OFFSET $4
+      `;
+      
+      const countQuery = `
+        SELECT COUNT(*) FROM shipments 
+        WHERE description_search @@ plainto_tsquery('english', $2)
+        ${participantCondition}
+      `;
+
+      shipments = await this.prisma.$queryRawUnsafe(
+        query,
+        ...participantParams,
+        search,
+        limit,
+        (page - 1) * limit
+      );
+
+      const countResult = await this.prisma.$queryRawUnsafe(
+        countQuery,
+        ...participantParams,
+        search
+      );
+      total = Number(countResult[0].count);
+    } else {
+      [shipments, total] = await this.prisma.$transaction([
         this.prisma.shipment.findMany({
           where,
           include: { milestones: { orderBy: { milestoneIndex: 'asc' } } },
@@ -251,25 +285,16 @@ export class ShipmentsService {
         }),
         this.prisma.shipment.count({ where }),
       ]);
-
-      const result = {
-        data: shipments.map((s) => this.serialize(s)),
-        meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
-      };
-      await this.redis.setJson(cacheKey, result, this.cacheTtl);
-      return result;
     }
 
-    const [shipments, total] = await this.prisma.$transaction([
-      this.prisma.shipment.findMany({
-        where,
-        include: { milestones: { orderBy: { milestoneIndex: 'asc' } } },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.shipment.count({ where }),
-    ]);
+    if (search) {
+      for (const s of shipments) {
+        s.milestones = await this.prisma.milestone.findMany({
+          where: { shipmentId: s.id },
+          orderBy: { milestoneIndex: 'asc' },
+        });
+      }
+    }
 
     return {
       data: shipments.map((s) => this.serialize(s)),
@@ -835,6 +860,86 @@ export class ShipmentsService {
         doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
         doc.moveDown();
       }
+
+      doc.end();
+    });
+  }
+
+  async exportOnePdf(id: string): Promise<Buffer> {
+    const shipment = await this.prisma.shipment.findUnique({
+      where: { id },
+      include: {
+        milestones: { orderBy: { milestoneIndex: 'asc' } },
+        events: { orderBy: { ledger: 'desc' }, take: 50 },
+        comments: { where: { visibility: 'ALL' }, orderBy: { createdAt: 'asc' } },
+      },
+    });
+    if (!shipment) throw new NotFoundException(`Shipment ${id} not found`);
+
+    return new Promise((resolve, reject) => {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const PDFDocument = require('pdfkit');
+      const doc = new PDFDocument({ margin: 40, size: 'A4' });
+      const chunks: Buffer[] = [];
+      doc.on('data', (c: Buffer) => chunks.push(c));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      const decimals = 7;
+      const toUsdc = (raw: bigint) =>
+        this.stellar.toHumanAmount(raw ?? 0n, decimals);
+
+      doc.fontSize(18).text('ChainSettle — Shipment Export', { align: 'center' });
+      doc.fontSize(10).text(`Generated: ${new Date().toISOString()}`, { align: 'center' });
+      doc.moveDown();
+
+      doc.fontSize(13).text(`Shipment: ${shipment.id}`, { underline: true });
+      doc.fontSize(9);
+
+      const participants = [
+        ['Buyer', shipment.buyerAddress],
+        ['Supplier', shipment.supplierAddress],
+        ['Logistics', shipment.logisticsAddress],
+        ['Arbiter', shipment.arbiterAddress],
+      ];
+      for (const [role, addr] of participants) {
+        doc.text(`${role}: ${addr}`);
+      }
+
+      doc.moveDown(0.5);
+      doc.text(`Status: ${shipment.status}   Total: ${toUsdc(shipment.totalAmount)} USDC   Released: ${toUsdc(shipment.releasedAmount)} USDC`);
+      doc.text(`Created: ${shipment.createdAt?.toISOString() ?? ''}`);
+
+      if (shipment.milestones?.length) {
+        doc.moveDown(0.5).fontSize(10).text('Milestones:', { underline: true });
+        doc.fontSize(9);
+        for (const m of shipment.milestones) {
+          doc.text(
+            `  [${m.milestoneIndex}] ${m.name} — ${m.paymentPercent}% — ${m.status}` +
+            (m.confirmedAt ? ` — confirmed ${m.confirmedAt.toISOString()}` : '') +
+            (m.proofHash ? ` — Proof: ${m.proofHash}` : ''),
+          );
+        }
+      }
+
+      if (shipment.events?.length) {
+        doc.moveDown(0.5).fontSize(10).text('Chain Events:', { underline: true });
+        doc.fontSize(9);
+        for (const e of shipment.events) {
+          doc.text(`  [${e.ledger}] ${e.eventName} — ${e.txHash}`);
+        }
+      }
+
+      if (shipment.comments?.length) {
+        doc.moveDown(0.5).fontSize(10).text('Comments:', { underline: true });
+        doc.fontSize(9);
+        for (const c of shipment.comments) {
+          doc.text(`  [${c.createdAt.toISOString()}] ${c.authorId}: ${c.body}`);
+        }
+      }
+
+      doc.moveDown();
+      doc.fontSize(8).text(`Exported: ${new Date().toISOString()}`, { align: 'center' });
 
       doc.end();
     });
