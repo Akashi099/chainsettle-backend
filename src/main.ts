@@ -3,6 +3,7 @@ import { ValidationPipe, Logger, RequestMethod } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
+import * as compression from 'compression';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -29,7 +30,6 @@ async function bootstrap() {
   const fallbackOrigin = configService.get<string>('CORS_ORIGIN', 'http://localhost:5173');
 
   // Helmet — tuned for production security headers.
-  // Note: `helmet()` already sets X-Powered-By removal for Express, but we also explicitly disable it below.
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -49,6 +49,9 @@ async function bootstrap() {
     }),
   );
 
+  // Gzip compression — compress responses larger than 1 KB
+  app.use(compression({ threshold: 1024 }));
+
   // Ensure X-Powered-By is not present (belt-and-suspenders; helmet does this by default).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const expressApp = app.getHttpAdapter().getInstance() as any;
@@ -57,7 +60,6 @@ async function bootstrap() {
   }
 
   // CORS — strict origin allowlist.
-  // Cross-origin credentials are allowed only for configured origins.
   app.enableCors({
     origin:
       allowedOrigins && allowedOrigins.length > 0
@@ -74,15 +76,14 @@ async function bootstrap() {
     exclude: [{ path: 'metrics', method: RequestMethod.GET }],
   });
 
-  // Global validation pipe — safely auto-validates and transforms all incoming DTO inputs
+  // Global validation pipe
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true, // strip out all non-whitelisted fields sent in requests
-      forbidNonWhitelisted: true, // reject requests with unknown properties
-      transform: true, // automatically transform plain objects to type-instantiated DTO classes
-      transformOptions: { enableImplicitConversion: true }, // ensures query strings safely cast into expected primitive types
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      transformOptions: { enableImplicitConversion: true },
     }),
-
   );
 
   // Global exception filter — standardised error responses
