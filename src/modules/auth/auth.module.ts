@@ -5,8 +5,11 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
+import { ApiKeyStrategy } from './api-key.strategy';
+import { ApiKeysController } from './api-keys.controller';
 import { UsersController } from './users.controller';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 
 @Module({
   imports: [
@@ -20,9 +23,10 @@ import { NotificationsModule } from '../notifications/notifications.module';
       }),
     }),
     NotificationsModule,
+    AuditLogsModule,
   ],
-  controllers: [AuthController, UsersController],
-  providers: [AuthService, JwtStrategy],
+  controllers: [AuthController, UsersController, ApiKeysController],
+  providers: [AuthService, JwtStrategy, ApiKeyStrategy],
   exports: [AuthService],
 })
 export class AuthModule {}

@@ -18,6 +18,7 @@ import {
   ApiTags,
   ApiOperation,
   ApiResponse,
+  ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -85,14 +86,16 @@ export class ShipmentsController {
       status: query.status,
       referenceNumber: query.referenceNumber,
       tags,
-      page: query.page,
-      limit: query.limit,
+      page: query.page ? parseInt(query.page) : undefined,
+      limit: query.limit ? parseInt(query.limit) : undefined,
       createdAfter: query.createdAfter,
       createdBefore: query.createdBefore,
       updatedAfter: query.updatedAfter,
       updatedBefore: query.updatedBefore,
       callerStellarAddress: user?.stellarAddress,
       isAdmin,
+      includeArchived: query.includeArchived,
+      search: query.search,
     });
   }
 
@@ -173,6 +176,26 @@ export class ShipmentsController {
   }
 
   /**
+   * GET /api/v1/shipments/:id/export
+   * Export a single shipment as a standalone PDF.
+   * Rate-limited to 10 requests per hour per user.
+   */
+  @Get(':id/export')
+  @UseGuards(ShipmentParticipantGuard)
+  @Throttle({ default: { limit: 10, ttl: 60 * 60 * 1000 } })
+  @ApiOperation({ summary: 'Export a single shipment as a standalone PDF' })
+  @ApiResponse({ status: 200, description: 'PDF export generated' })
+  @ApiResponse({ status: 403, description: 'Not a shipment participant' })
+  @ApiResponse({ status: 404, description: 'Shipment not found' })
+  async exportOne(@Param('id') id: string, @Res() res: Response) {
+    const pdf = await this.shipmentsService.exportOnePdf(id);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="chainsettle-shipment-${id}-${timestamp}.pdf"`);
+    res.end(pdf);
+  }
+
+  /**
    * PATCH /api/v1/shipments/:id
    * Update shipment metadata (description, referenceNumber, metadata, tags).
    */
@@ -242,30 +265,71 @@ export class ShipmentsController {
   }
 
   /**
+   * POST /api/v1/shipments/:id/archive
+   * Archive a completed/cancelled shipment to hide it from default listings (buyer only).
+   */
+  @Post(':id/archive')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Archive a completed/cancelled shipment (buyer only)' })
+  @ApiResponse({ status: 200, description: 'Shipment archived' })
+  @ApiResponse({ status: 403, description: 'Only the buyer can archive' })
+  @ApiResponse({ status: 409, description: 'Only COMPLETED or CANCELLED shipments can be archived' })
+  archive(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.shipmentsService.archive(id, user.stellarAddress);
+  }
+
+  /**
+   * POST /api/v1/shipments/:id/unarchive
+   * Restore an archived shipment to the default listing (buyer only).
+   */
+  @Post(':id/unarchive')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Unarchive a shipment (buyer only)' })
+  @ApiResponse({ status: 200, description: 'Shipment unarchived' })
+  @ApiResponse({ status: 403, description: 'Only the buyer can unarchive' })
+  @ApiResponse({ status: 409, description: 'Shipment is not archived' })
+  unarchive(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.shipmentsService.unarchive(id, user.stellarAddress);
+  }
+
+  /**
+   * GET /api/v1/shipments/:id/my-role
+   * Return the caller's participant role without exposing full shipment data.
+   * Non-participants receive { role: null } with 200 instead of 403.
+   */
+  @Get(':id/my-role')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Get the caller's participant role for a shipment" })
+  @ApiResponse({ status: 200, description: "Role: BUYER | SUPPLIER | LOGISTICS | ARBITER | ADMIN | null" })
+  myRole(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.shipmentsService.getCallerRole(id, user.stellarAddress, user.role === UserRole.ADMIN);
+  }
+
+  /**
    * POST /api/v1/shipments/:id/sync
    */
-    @Post(':id/sync')
-    @UseGuards(ShipmentParticipantGuard)
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({ summary: 'Force sync shipment status from Stellar chain' })
-    sync(@Param('id') id: string) {
-      return this.shipmentsService.syncStatusFromChain(id);
-    }
+  @Post(':id/sync')
+  @UseGuards(ShipmentParticipantGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Force sync shipment status from Stellar chain' })
+  sync(@Param('id') id: string) {
+    return this.shipmentsService.syncStatusFromChain(id);
+  }
 
-    /**
-     * POST /api/v1/shipments/:id/tracking
-     * Submit a tracking update (location, status, ETA). Restricted to logistics participant.
-     * Tracking updates are immutable after submission.
-     */
-    @Post(':id/tracking')
-    @HttpCode(HttpStatus.CREATED)
-    @ApiOperation({ summary: 'Submit a tracking update for a shipment (logistics only)' })
-    @ApiResponse({ status: 201, description: 'Tracking update created' })
-    @ApiResponse({ status: 403, description: 'Only logistics participant can submit' })
-    @ApiResponse({ status: 404, description: 'Shipment not found' })
-    createTracking(@Param('id') id: string, @Body() dto: CreateTrackingDto, @CurrentUser() user: any) {
-      return this.shipmentsService.createTracking(id, user.stellarAddress, dto);
-    }
+  /**
+   * POST /api/v1/shipments/:id/tracking
+   * Submit a tracking update (location, status, ETA). Restricted to logistics participant.
+   * Tracking updates are immutable after submission.
+   */
+  @Post(':id/tracking')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Submit a tracking update for a shipment (logistics only)' })
+  @ApiResponse({ status: 201, description: 'Tracking update created' })
+  @ApiResponse({ status: 403, description: 'Only logistics participant can submit' })
+  @ApiResponse({ status: 404, description: 'Shipment not found' })
+  createTracking(@Param('id') id: string, @Body() dto: CreateTrackingDto, @CurrentUser() user: any) {
+    return this.shipmentsService.createTracking(id, user.stellarAddress, dto);
+  }
 
     /**
      * GET /api/v1/shipments/:id/tracking
@@ -281,6 +345,4 @@ export class ShipmentsController {
     getTracking(@Param('id') id: string, @CurrentUser() user: any) {
       return this.shipmentsService.getTracking(id, user.stellarAddress);
     }
-  }
-}
 }

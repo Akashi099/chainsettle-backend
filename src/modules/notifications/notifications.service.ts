@@ -139,14 +139,54 @@ export class NotificationsService {
     });
   }
 
-  async sendEmail(to: string, subject: string, text: string) {
+  async buildDigest(userId: string): Promise<{ subject: string; html: string } | null> {
+    const unread = await this.prisma.notification.findMany({
+      where: { userId, read: false },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (unread.length === 0) return null;
+
+    const grouped = unread.reduce(
+      (acc, n) => {
+        const key = n.type as string;
+        acc[key] = acc[key] ?? [];
+        acc[key].push(n);
+        return acc;
+      },
+      {} as Record<string, typeof unread>,
+    );
+
+    const sections = Object.entries(grouped)
+      .map(([type, items]) => {
+        const rows = items
+          .map((n) => `<li>${n.title}</li>`)
+          .join('');
+        return `<h3 style="color:#1a1a2e;">${type.replace(/_/g, ' ')} (${items.length})</h3><ul>${rows}</ul>`;
+      })
+      .join('');
+
+    const html = `
+      <div style="font-family:sans-serif;max-width:600px;margin:0 auto;">
+        <h2 style="color:#1a1a2e;">ChainSettle — Daily Notification Digest</h2>
+        <p>You have <strong>${unread.length}</strong> unread notification(s):</p>
+        ${sections}
+        <hr />
+        <small style="color:#888;">Log in to ChainSettle to view and manage your notifications.</small>
+      </div>
+    `;
+
+    return { subject: `Daily digest — ${unread.length} unread notification(s)`, html };
+  }
+
+  async sendEmail(to: string, subject: string, text: string, html?: string) {
     try {
       await this.transporter.sendMail({
         from: this.config.get('EMAIL_FROM', 'noreply@chainsetttle.com'),
         to,
         subject: `ChainSettle — ${subject}`,
         text,
-        html: `
+        html: html ?? `
           <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
             <h2 style="color: #1a1a2e;">ChainSettle</h2>
             <p>${text}</p>

@@ -3,7 +3,6 @@ import {
   Get,
   Query,
   UseGuards,
-  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -12,10 +11,10 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
 import { AuditLogService } from './audit-log.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { UserRole } from '@prisma/client';
+import { Roles } from '../../common/decorators/roles.decorator';
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -30,6 +29,7 @@ export class AuditLogsController {
    * Restricted to users with role = ADMIN.
    */
   @Get()
+  @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Get audit logs (admin only)' })
   @ApiResponse({ status: 200, description: 'Audit logs retrieved' })
   @ApiResponse({ status: 403, description: 'Not authorized (admin only)' })
@@ -42,7 +42,6 @@ export class AuditLogsController {
   @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (default 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page (default 50)' })
   async findAll(
-    @CurrentUser() user: any,
     @Query('actorAddress') actorAddress?: string,
     @Query('action') action?: string,
     @Query('resourceType') resourceType?: string,
@@ -52,12 +51,6 @@ export class AuditLogsController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    // Enforce admin-only access
-    if (user.role !== UserRole.ADMIN) {
-      throw new ForbiddenException('Only admins can access audit logs');
-    }
-
-    // Parse date strings
     const startDate = startDateStr ? new Date(startDateStr) : undefined;
     const endDate = endDateStr ? new Date(endDateStr) : undefined;
 
@@ -78,22 +71,11 @@ export class AuditLogsController {
    * Get all audit logs for a specific resource (read-only for details).
    */
   @Get('resource/:resourceType/:resourceId')
+  @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Get audit logs for a specific resource (admin only)' })
   @ApiResponse({ status: 200, description: 'Audit logs for resource' })
   @ApiResponse({ status: 403, description: 'Not authorized (admin only)' })
-  async findByResource(
-    @CurrentUser() user: any,
-    // @Param('resourceType') resourceType: string,
-    // @Param('resourceId') resourceId: string,
-  ) {
-    // Enforce admin-only access
-    if (user.role !== UserRole.ADMIN) {
-      throw new ForbiddenException('Only admins can access audit logs');
-    }
-
-    // Note: We don't actually use the params from the route because the route is
-    // /resource/:resourceType/:resourceId but we're using @Get() with a nested path.
-    // In production, you'd implement this properly with @Param decorators.
+  async findByResource() {
     return { message: 'Use GET /admin/audit-logs with filters instead' };
   }
 }

@@ -1,5 +1,5 @@
 import { Controller, Post, Get, Delete, Body, Param, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { WebhooksService } from './webhooks.service';
 import { CreateWebhookDto } from './dto/create-webhook.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -30,13 +30,17 @@ export class WebhooksController {
     return this.webhooksService.remove(id, userId);
   }
 
-  @Post(':id/rotate-secret')
+  @Post(':id/deliveries/:deliveryId/retry')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Rotate the signing secret for a webhook endpoint — returns new plaintext secret once' })
-  @ApiResponse({ status: 200, description: 'New plaintext secret returned once' })
-  @ApiResponse({ status: 403, description: 'Not the endpoint owner' })
-  @ApiResponse({ status: 404, description: 'Endpoint not found' })
-  rotateSecret(@Param('id') id: string, @CurrentUser('id') userId: string) {
-    return this.webhooksService.rotateSecret(id, userId);
+  @ApiOperation({ summary: 'Manually retry a failed webhook delivery' })
+  @ApiResponse({ status: 200, description: 'Webhook delivery retried' })
+  @ApiResponse({ status: 403, description: 'Only the endpoint owner can retry' })
+  @ApiResponse({ status: 404, description: 'Webhook delivery not found' })
+  retryDelivery(
+    @Param('id') id: string,
+    @Param('deliveryId') deliveryId: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.webhooksService.retryDelivery(id, deliveryId, userId);
   }
 }

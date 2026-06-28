@@ -1,17 +1,32 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe, Logger, RequestMethod } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
+import * as compression from 'compression';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ThrottlerExceptionFilter } from './common/filters/throttler-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { createWinstonLogger } from './common/logger/winston.logger';
 
 async function bootstrap() {
-  const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule);
+  const winstonLogger = createWinstonLogger();
+
+  process.on('uncaughtException', (err) => {
+    winstonLogger.error(`Uncaught exception: ${err.message}`, err.stack, 'UncaughtException');
+  });
+  process.on('unhandledRejection', (reason: any) => {
+    winstonLogger.error(
+      `Unhandled rejection: ${reason?.message ?? reason}`,
+      reason?.stack,
+      'UnhandledRejection',
+    );
+  });
+
+  const app = await NestFactory.create(AppModule, { logger: winstonLogger });
+  const logger = winstonLogger;
 
   // Use Socket.io adapter for WebSocket gateways
   app.useWebSocketAdapter(new IoAdapter(app));
@@ -29,7 +44,6 @@ async function bootstrap() {
   const fallbackOrigin = configService.get<string>('CORS_ORIGIN', 'http://localhost:5173');
 
   // Helmet — tuned for production security headers.
-  // Note: `helmet()` already sets X-Powered-By removal for Express, but we also explicitly disable it below.
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -49,6 +63,9 @@ async function bootstrap() {
     }),
   );
 
+  // Gzip compression — compress responses larger than 1 KB
+  app.use(compression({ threshold: 1024 }));
+
   // Ensure X-Powered-By is not present (belt-and-suspenders; helmet does this by default).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const expressApp = app.getHttpAdapter().getInstance() as any;
@@ -57,30 +74,31 @@ async function bootstrap() {
   }
 
   // CORS — strict origin allowlist.
-  // Cross-origin credentials are allowed only for configured origins.
   app.enableCors({
     origin:
       allowedOrigins && allowedOrigins.length > 0
         ? allowedOrigins
         : [fallbackOrigin],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
+    exposedHeaders: ['X-Request-ID'],
     credentials: true,
   });
 
 
-  // Global prefix for all routes
-  app.setGlobalPrefix(apiPrefix);
+  // Global prefix for all routes — /metrics is excluded so Prometheus can scrape it without the prefix
+  app.setGlobalPrefix(apiPrefix, {
+    exclude: [{ path: 'metrics', method: RequestMethod.GET }],
+  });
 
-  // Global validation pipe — safely auto-validates and transforms all incoming DTO inputs
+  // Global validation pipe
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true, // strip out all non-whitelisted fields sent in requests
-      forbidNonWhitelisted: true, // reject requests with unknown properties
-      transform: true, // automatically transform plain objects to type-instantiated DTO classes
-      transformOptions: { enableImplicitConversion: true }, // ensures query strings safely cast into expected primitive types
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      transformOptions: { enableImplicitConversion: true },
     }),
-
   );
 
   // Global exception filter — standardised error responses

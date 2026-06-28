@@ -92,4 +92,32 @@ export class RedisService implements OnModuleDestroy {
   async ttl(key: string): Promise<number> {
     return this.client.ttl(key);
   }
+
+  async getJson<T>(key: string): Promise<T | null> {
+    const raw = await this.client.get(key);
+    if (raw === null) return null;
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return null;
+    }
+  }
+
+  async setJson<T>(key: string, value: T, ttlSeconds: number): Promise<void> {
+    await this.client.setex(key, ttlSeconds, JSON.stringify(value));
+  }
+
+  /**
+   * Delete all keys matching a prefix using SCAN (safe for large keyspaces).
+   */
+  async delByPrefix(prefix: string): Promise<void> {
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.client.scan(cursor, 'MATCH', `${prefix}*`, 'COUNT', 100);
+      cursor = next;
+      if (keys.length > 0) {
+        await this.client.del(...keys);
+      }
+    } while (cursor !== '0');
+  }
 }
