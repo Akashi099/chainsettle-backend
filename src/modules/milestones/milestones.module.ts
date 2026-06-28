@@ -5,9 +5,10 @@ import { MilestonesService } from './milestones.service';
 import { MilestoneDeadlineJob } from './milestone-deadline.job';
 import { DisputeEscalationJob } from './dispute-escalation.job';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 
 @Module({
-  imports: [NotificationsModule],
+  imports: [NotificationsModule, AuditLogsModule],
   controllers: [MilestonesController],
   providers: [MilestonesService, MilestoneDeadlineJob, DisputeEscalationJob],
   exports: [MilestonesService],

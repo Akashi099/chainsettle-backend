@@ -1,4 +1,3 @@
-// milestones.service.ts
 import { 
   Injectable, 
   NotFoundException, 
@@ -9,6 +8,7 @@ import {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { IpfsService } from '../../common/ipfs/ipfs.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AuditLogService } from '../audit-logs/audit-log.service';
 import { MilestoneStatus, NotificationType, DisputeRole, ArbiterStatus } from '@prisma/client';
 
 @Injectable()
@@ -19,6 +19,7 @@ export class MilestonesService {
     private readonly prisma: PrismaService,
     private readonly ipfs: IpfsService,
     private readonly notifications: NotificationsService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   async findByShipment(shipmentId: string) {
@@ -371,5 +372,59 @@ export class MilestonesService {
       ...item,
       ipfsUrl: item.ipfsCid ? this.ipfs.getGatewayUrl(item.ipfsCid) : null,
     }));
+  }
+
+  /**
+   * Retract (delete) dispute evidence.
+   * Only the original submitter can retract while the milestone is DISPUTED.
+   */
+  async retractEvidence(
+    shipmentId: string,
+    milestoneIndex: number,
+    evidenceId: string,
+    callerAddress: string,
+  ) {
+    const evidence = await this.prisma.disputeEvidence.findUnique({
+      where: { id: evidenceId },
+      include: {
+        milestone: {
+          include: { shipment: true },
+        },
+      },
+    });
+
+    if (
+      !evidence ||
+      evidence.milestone.shipmentId !== shipmentId ||
+      evidence.milestone.milestoneIndex !== milestoneIndex
+    ) {
+      throw new NotFoundException(`Evidence ${evidenceId} not found on this milestone`);
+    }
+
+    if (evidence.submittedBy !== callerAddress) {
+      throw new ForbiddenException('Only the original submitter can retract this evidence');
+    }
+
+    if (evidence.milestone.status === MilestoneStatus.RESOLVED) {
+      throw new ConflictException('Cannot retract evidence after the dispute is resolved');
+    }
+
+    await this.prisma.disputeEvidence.delete({ where: { id: evidenceId } });
+
+    const user = await this.prisma.user.findUnique({
+      where: { stellarAddress: callerAddress },
+      select: { id: true },
+    });
+
+    await this.auditLog.record({
+      actorId: user?.id,
+      actorAddress: callerAddress,
+      action: 'DISPUTE_EVIDENCE_RETRACTED',
+      resourceType: 'DisputeEvidence',
+      resourceId: evidenceId,
+      metadata: { shipmentId, milestoneIndex },
+    });
+
+    this.logger.log(`Evidence ${evidenceId} retracted by ${callerAddress}`);
   }
 }

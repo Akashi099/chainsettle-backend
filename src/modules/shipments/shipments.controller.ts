@@ -147,6 +147,19 @@ export class ShipmentsController {
   }
 
   /**
+   * GET /api/v1/shipments/:id/participants
+   * Returns all four participant roles with Stellar address and name.
+   */
+  @Get(':id/participants')
+  @UseGuards(ShipmentParticipantGuard)
+  @ApiOperation({ summary: 'Get structured list of shipment participants with roles' })
+  @ApiResponse({ status: 200, description: 'List of participants' })
+  @ApiResponse({ status: 403, description: 'Not a participant' })
+  getParticipants(@Param('id') id: string) {
+    return this.shipmentsService.getParticipants(id);
+  }
+
+  /**
    * GET /api/v1/shipments/:id
    * Full shipment detail including milestones and recent on-chain events.
    */

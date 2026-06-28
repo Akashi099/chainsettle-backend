@@ -352,6 +352,14 @@ model WebhookDelivery {
   @@map("webhook_deliveries")
 }
 
+model EventCursor {
+  id                   String   @id // singleton: always 'main'
+  lastProcessedLedger  Int
+  updatedAt            DateTime @updatedAt
+
+  @@map("event_cursors")
+}
+
 model ShipmentTemplate {
   id                String   @id @default(uuid())
   ownerId           String

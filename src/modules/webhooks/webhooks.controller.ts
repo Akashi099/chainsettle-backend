@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Delete, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Delete, Body, Param, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { WebhooksService } from './webhooks.service';
 import { CreateWebhookDto } from './dto/create-webhook.dto';
@@ -28,5 +28,15 @@ export class WebhooksController {
   @ApiOperation({ summary: 'Delete a webhook endpoint' })
   remove(@Param('id') id: string, @CurrentUser('id') userId: string) {
     return this.webhooksService.remove(id, userId);
+  }
+
+  @Post(':id/rotate-secret')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Rotate the signing secret for a webhook endpoint — returns new plaintext secret once' })
+  @ApiResponse({ status: 200, description: 'New plaintext secret returned once' })
+  @ApiResponse({ status: 403, description: 'Not the endpoint owner' })
+  @ApiResponse({ status: 404, description: 'Endpoint not found' })
+  rotateSecret(@Param('id') id: string, @CurrentUser('id') userId: string) {
+    return this.webhooksService.rotateSecret(id, userId);
   }
 }

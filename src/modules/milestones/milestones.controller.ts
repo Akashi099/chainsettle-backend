@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Param,
   ParseIntPipe,
   UseGuards,
@@ -152,6 +153,26 @@ export class MilestonesController {
       index,
       callerAddress,
       file,
+    );
+  }
+
+  @Delete(':index/evidence/:evidenceId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Retract submitted dispute evidence (submitter only, while DISPUTED)' })
+  @ApiResponse({ status: 204, description: 'Evidence deleted' })
+  @ApiResponse({ status: 403, description: 'Not the original submitter' })
+  @ApiResponse({ status: 409, description: 'Dispute already resolved' })
+  retractEvidence(
+    @Param('shipmentId') shipmentId: string,
+    @Param('index', ParseIntPipe) index: number,
+    @Param('evidenceId') evidenceId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.milestonesService.retractEvidence(
+      shipmentId,
+      index,
+      evidenceId,
+      user?.stellarAddress ?? user?.sub,
     );
   }
 }
