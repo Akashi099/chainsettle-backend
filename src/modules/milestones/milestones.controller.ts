@@ -11,6 +11,8 @@ import {
   BadRequestException,
   HttpCode,
   HttpStatus,
+  Res,
+  NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -22,10 +24,12 @@ import {
   ApiResponse,
 } from '@nestjs/swagger';
 import { memoryStorage } from 'multer';
+import { Response } from 'express';
 import { MilestonesService } from './milestones.service';
 import { ConfirmMilestoneDto } from './dto/confirm-milestone.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ShipmentParticipantGuard } from '../shipments/guards/shipment-participant.guard';
 
 /** Maximum allowed proof file size: 50 MB */
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -158,35 +162,28 @@ export class MilestonesController {
   }
 
   /**
-   * POST /api/v1/shipments/:shipmentId/milestones/:index/confirm
-   *
-   * Buyer registers a milestone confirmation transaction hash after
-   * signing it in Freighter. Restricted to the shipment's buyerAddress.
+   * GET /api/v1/shipments/:shipmentId/milestones/:index/evidence/:evidenceId/download
+   * Download a dispute evidence file through the backend proxy.
    */
-  @Post(':index/confirm')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Confirm a milestone from the buyer wallet',
-    description:
-      "Registers the confirm_milestone transaction hash signed in Freighter. Only the shipment's buyerAddress may call this endpoint.",
-  })
-  @ApiResponse({ status: 200, description: 'Milestone confirmed' })
-  @ApiResponse({ status: 403, description: 'Caller is not the buyer' })
-  @ApiResponse({ status: 409, description: 'Milestone is not in PROOF_SUBMITTED status' })
-  confirmMilestone(
+  @Get(':index/evidence/:evidenceId/download')
+  @UseGuards(ShipmentParticipantGuard)
+  @ApiOperation({ summary: 'Download dispute evidence file' })
+  @ApiResponse({ status: 200, description: 'File streamed' })
+  @ApiResponse({ status: 403, description: 'Not a shipment participant' })
+  @ApiResponse({ status: 404, description: 'Evidence not found or no file attached' })
+  async downloadEvidence(
     @Param('shipmentId') shipmentId: string,
     @Param('index', ParseIntPipe) index: number,
-    @CurrentUser() user: any,
-    @Body() dto: ConfirmMilestoneDto,
+    @Param('evidenceId') evidenceId: string,
+    @Res() res: Response,
   ) {
-    const callerAddress: string = user?.stellarAddress ?? user?.sub;
-
-    return this.milestonesService.confirmFromApi(
+    const { fileBuffer, fileName, mimeType } = await this.milestonesService.downloadEvidence(
       shipmentId,
       index,
-      callerAddress,
-      dto.txHash,
-      dto.paymentReleased,
+      evidenceId,
     );
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.end(fileBuffer);
   }
 }

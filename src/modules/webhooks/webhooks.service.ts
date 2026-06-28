@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import axios from 'axios';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -43,6 +43,58 @@ export class WebhooksService {
       where: { active: true, events: { has: eventType } },
     });
     await Promise.allSettled(endpoints.map((ep) => this.attempt(ep, eventType, payload, 1)));
+  }
+
+  async retryDelivery(endpointId: string, deliveryId: string, userId: string) {
+    const endpoint = await this.prisma.webhookEndpoint.findFirst({
+      where: { id: endpointId, userId },
+    });
+
+    if (!endpoint) {
+      throw new ForbiddenException('Only the endpoint owner can retry deliveries');
+    }
+
+    const delivery = await this.prisma.webhookDelivery.findFirst({
+      where: { id: deliveryId, endpointId },
+    });
+
+    if (!delivery) {
+      throw new NotFoundException('Webhook delivery not found');
+    }
+
+    const body = JSON.stringify({ eventType: delivery.eventType, payload: delivery.payload, timestamp: new Date().toISOString() });
+    const signature = `sha256=${crypto.createHmac('sha256', endpoint.secret).update(body).digest('hex')}`;
+
+    try {
+      const res = await axios.post(endpoint.url, body, {
+        headers: { 'Content-Type': 'application/json', 'X-ChainSettle-Signature': signature },
+        timeout: 10_000,
+      });
+
+      await this.prisma.webhookDelivery.update({
+        where: { id: deliveryId },
+        data: {
+          statusCode: res.status,
+          responseBody: String(res.data ?? '').slice(0, 1000),
+          deliveredAt: new Date(),
+          attemptCount: delivery.attemptCount + 1,
+        },
+      });
+    } catch (err) {
+      const statusCode: number | null = err.response?.status ?? null;
+      const responseBody = String(err.response?.data ?? err.message ?? '').slice(0, 1000);
+
+      await this.prisma.webhookDelivery.update({
+        where: { id: deliveryId },
+        data: {
+          statusCode,
+          responseBody,
+          attemptCount: delivery.attemptCount + 1,
+        },
+      });
+    }
+
+    return { message: 'Webhook delivery retried' };
   }
 
   private async attempt(
