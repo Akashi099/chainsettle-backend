@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nest
 import * as crypto from 'crypto';
 import axios from 'axios';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { AuditLogService } from '../audit-logs/audit-log.service';
 import { NotificationType } from '@prisma/client';
 import { CreateWebhookDto } from './dto/create-webhook.dto';
 
@@ -11,7 +12,10 @@ const MAX_ATTEMPTS = 3;
 export class WebhooksService {
   private readonly logger = new Logger(WebhooksService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   async register(userId: string, dto: CreateWebhookDto) {
     const plaintext = crypto.randomBytes(32).toString('hex');
@@ -36,6 +40,33 @@ export class WebhooksService {
     const ep = await this.prisma.webhookEndpoint.findFirst({ where: { id, userId } });
     if (!ep) throw new NotFoundException('Webhook endpoint not found');
     return this.prisma.webhookEndpoint.delete({ where: { id } });
+  }
+
+  async rotateSecret(id: string, userId: string) {
+    const ep = await this.prisma.webhookEndpoint.findFirst({ where: { id } });
+    if (!ep) throw new NotFoundException('Webhook endpoint not found');
+    if (ep.userId !== userId) throw new ForbiddenException('Not the endpoint owner');
+
+    const plaintext = crypto.randomBytes(32).toString('hex');
+    const hashed = crypto.createHash('sha256').update(plaintext).digest('hex');
+
+    await this.prisma.webhookEndpoint.update({
+      where: { id },
+      data: { secret: hashed },
+    });
+
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { stellarAddress: true } });
+
+    await this.auditLog.record({
+      actorId: userId,
+      actorAddress: user?.stellarAddress ?? 'unknown',
+      action: 'WEBHOOK_SECRET_ROTATED',
+      resourceType: 'WebhookEndpoint',
+      resourceId: id,
+    });
+
+    this.logger.log(`Webhook secret rotated for endpoint ${id} by user ${userId}`);
+    return { secret: plaintext };
   }
 
   async dispatch(eventType: NotificationType, payload: Record<string, any>) {

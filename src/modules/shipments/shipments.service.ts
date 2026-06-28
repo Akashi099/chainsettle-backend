@@ -750,6 +750,36 @@ export class ShipmentsService {
   }
 
   // ----------------------------------------------------------
+  // PARTICIPANTS
+  // ----------------------------------------------------------
+
+  async getParticipants(shipmentId: string) {
+    const shipment = await this.prisma.shipment.findUnique({
+      where: { id: shipmentId },
+      select: {
+        buyerAddress: true,
+        supplierAddress: true,
+        logisticsAddress: true,
+        arbiterAddress: true,
+        arbiterStatus: true,
+        buyer: { select: { name: true } },
+        supplier: { select: { name: true } },
+        logistics: { select: { name: true } },
+        arbiter: { select: { name: true } },
+      },
+    });
+
+    if (!shipment) throw new NotFoundException(`Shipment ${shipmentId} not found`);
+
+    return [
+      { role: 'BUYER', stellarAddress: shipment.buyerAddress, name: shipment.buyer.name ?? null },
+      { role: 'SUPPLIER', stellarAddress: shipment.supplierAddress, name: shipment.supplier.name ?? null },
+      { role: 'LOGISTICS', stellarAddress: shipment.logisticsAddress, name: shipment.logistics.name ?? null },
+      { role: 'ARBITER', stellarAddress: shipment.arbiterAddress, name: shipment.arbiter.name ?? null, arbiterStatus: shipment.arbiterStatus },
+    ];
+  }
+
+  // ----------------------------------------------------------
   // SYNC FROM CHAIN — called by EventsService after polling
   // ----------------------------------------------------------
 

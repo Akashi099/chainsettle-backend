@@ -102,6 +102,16 @@ export class EventsService implements OnModuleInit {
         }
         this.lastProcessedLedger = Math.max(this.lastProcessedLedger, event.ledger + 1);
       }
+
+      try {
+        await this.prisma.eventCursor.update({
+          where: { id: 'main' },
+          data: { lastProcessedLedger: this.lastProcessedLedger },
+        });
+        this.logger.debug(`Cursor persisted at ledger ${this.lastProcessedLedger}`);
+      } catch (err) {
+        this.logger.warn(`Cursor DB write failed (in-memory value still correct): ${(err as Error).message}`);
+      }
     } catch (error) {
       this.logger.error('Event polling failed', (error as Error).message);
     }
