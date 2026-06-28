@@ -4,9 +4,10 @@ import { ShipmentsService } from './shipments.service';
 import { CommentsController } from './comments.controller';
 import { CommentsService } from './comments.service';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { RedisModule } from '../../common/redis/redis.module';
 
 @Module({
-  imports: [NotificationsModule],
+  imports: [NotificationsModule, RedisModule],
   controllers: [ShipmentsController, CommentsController],
   providers: [ShipmentsService, CommentsService],
   exports: [ShipmentsService],
