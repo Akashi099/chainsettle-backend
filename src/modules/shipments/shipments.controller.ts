@@ -18,6 +18,7 @@ import {
   ApiTags,
   ApiOperation,
   ApiResponse,
+  ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -85,8 +86,8 @@ export class ShipmentsController {
       status: query.status,
       referenceNumber: query.referenceNumber,
       tags,
-      page: query.page,
-      limit: query.limit,
+      page: query.page ? parseInt(query.page) : undefined,
+      limit: query.limit ? parseInt(query.limit) : undefined,
       createdAfter: query.createdAfter,
       createdBefore: query.createdBefore,
       updatedAfter: query.updatedAfter,
@@ -94,6 +95,7 @@ export class ShipmentsController {
       callerStellarAddress: user?.stellarAddress,
       isAdmin,
       includeArchived: query.includeArchived,
+      search: query.search,
     });
   }
 
@@ -158,6 +160,26 @@ export class ShipmentsController {
   @ApiResponse({ status: 404, description: 'Shipment not found' })
   findOne(@Param('id') id: string) {
     return this.shipmentsService.findOne(id);
+  }
+
+  /**
+   * GET /api/v1/shipments/:id/export
+   * Export a single shipment as a standalone PDF.
+   * Rate-limited to 10 requests per hour per user.
+   */
+  @Get(':id/export')
+  @UseGuards(ShipmentParticipantGuard)
+  @Throttle({ default: { limit: 10, ttl: 60 * 60 * 1000 } })
+  @ApiOperation({ summary: 'Export a single shipment as a standalone PDF' })
+  @ApiResponse({ status: 200, description: 'PDF export generated' })
+  @ApiResponse({ status: 403, description: 'Not a shipment participant' })
+  @ApiResponse({ status: 404, description: 'Shipment not found' })
+  async exportOne(@Param('id') id: string, @Res() res: Response) {
+    const pdf = await this.shipmentsService.exportOnePdf(id);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="chainsettle-shipment-${id}-${timestamp}.pdf"`);
+    res.end(pdf);
   }
 
   /**
@@ -296,18 +318,18 @@ export class ShipmentsController {
     return this.shipmentsService.createTracking(id, user.stellarAddress, dto);
   }
 
-  /**
-   * GET /api/v1/shipments/:id/tracking
-   * Get all tracking updates for a shipment in chronological order.
-   * Restricted to shipment participants.
-   */
-  @Get(':id/tracking')
-  @UseGuards(ShipmentParticipantGuard)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Get all tracking updates for a shipment in chronological order' })
-  @ApiResponse({ status: 200, description: 'Tracking updates retrieved' })
-  @ApiResponse({ status: 403, description: 'Not a shipment participant' })
-  getTracking(@Param('id') id: string, @CurrentUser() user: any) {
-    return this.shipmentsService.getTracking(id, user.stellarAddress);
-  }
+    /**
+     * GET /api/v1/shipments/:id/tracking
+     * Get all tracking updates for a shipment in chronological order.
+     * Restricted to shipment participants.
+     */
+    @Get(':id/tracking')
+    @UseGuards(ShipmentParticipantGuard)
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: 'Get all tracking updates for a shipment in chronological order' })
+    @ApiResponse({ status: 200, description: 'Tracking updates retrieved' })
+    @ApiResponse({ status: 403, description: 'Not a shipment participant' })
+    getTracking(@Param('id') id: string, @CurrentUser() user: any) {
+      return this.shipmentsService.getTracking(id, user.stellarAddress);
+    }
 }

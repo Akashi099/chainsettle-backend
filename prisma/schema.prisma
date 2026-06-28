@@ -233,6 +233,14 @@ model Notification {
   @@map("notifications")
 }
 
+model EventCursor {
+  id                  String   @id
+  lastProcessedLedger Int
+  updatedAt           DateTime @updatedAt
+
+  @@map("event_cursors")
+}
+
 model FailedEvent {
   id            String    @id @default(uuid())
   eventName     String
