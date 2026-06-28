@@ -99,6 +99,7 @@ model User {
   trackingUpdates    TrackingUpdate[]
   shipmentTemplates  ShipmentTemplate[] @relation("ShipmentTemplates")
   webhookEndpoints      WebhookEndpoint[]
+  apiKeys     ApiKey[]
   notificationPreference NotificationPreference?
 
   @@map("users")
@@ -395,3 +396,18 @@ model ShipmentTemplate {
   @@map("shipment_templates")
 }
 
+model ApiKey {
+  id          String    @id @default(uuid())
+  userId      String
+  keyHash     String    @unique  // SHA-256 hash of the plaintext key
+  name        String             // human label e.g. "CI Pipeline"
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  revokedAt   DateTime?          // null = active, set = revoked
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([keyHash])
+  @@index([userId])
+  @@map("api_keys")
+}
