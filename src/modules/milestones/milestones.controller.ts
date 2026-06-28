@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Param,
+  Body,
   ParseIntPipe,
   UseGuards,
   UseInterceptors,
@@ -25,6 +26,7 @@ import {
 import { memoryStorage } from 'multer';
 import { Response } from 'express';
 import { MilestonesService } from './milestones.service';
+import { ConfirmMilestoneDto } from './dto/confirm-milestone.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ShipmentParticipantGuard } from '../shipments/guards/shipment-participant.guard';
