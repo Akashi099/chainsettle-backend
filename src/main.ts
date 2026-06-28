@@ -80,7 +80,8 @@ async function bootstrap() {
         ? allowedOrigins
         : [fallbackOrigin],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
+    exposedHeaders: ['X-Request-ID'],
     credentials: true,
   });
 

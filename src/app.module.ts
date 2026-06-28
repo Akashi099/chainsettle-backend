@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -24,6 +24,7 @@ import { HealthModule } from './modules/health/health.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { AuditLogInterceptor } from './modules/audit-logs/audit-log.interceptor';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
+import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { ChainModule } from './modules/chain/chain.module';
 
 @Module({
@@ -94,4 +95,9 @@ import { ChainModule } from './modules/chain/chain.module';
     },
   ],
 })
-export class AppModule {}
+export class AppModule {
+  configure(consumer: MiddlewareConsumer) {
+    // Runs before JWT guard — attaches X-Request-ID to every request
+    consumer.apply(RequestIdMiddleware).forRoutes('*');
+  }
+}
