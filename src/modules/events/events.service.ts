@@ -108,35 +108,20 @@ export class EventsService implements OnModuleInit {
           this.metrics.incrementEventsFailed();
           await this.saveToDlq(event, error as Error);
         }
-        this.lastProcessedLedger = Math.max(
-          this.lastProcessedLedger,
-          event.ledger + 1,
-        );
-        await this.persistCursor(this.lastProcessedLedger);
-      },
-      (error) => {
-        this.logger.error('Event stream disconnected', error.message);
-        this.reconnectBackoffMs =
-          this.reconnectBackoffMs === 0
-            ? 5_000
-            : Math.min(this.reconnectBackoffMs * 2, 60_000);
-        this.logger.log(
-          `Reconnecting stream in ${this.reconnectBackoffMs / 1_000}s`,
-        );
-        setTimeout(() => this.startStreamSubscription(), this.reconnectBackoffMs);
-      },
-    );
-  }
+        this.lastProcessedLedger = Math.max(this.lastProcessedLedger, event.ledger + 1);
+      }
 
-  private async persistCursor(ledger: number): Promise<void> {
-    try {
-      await this.prisma.eventCursor.upsert({
-        where: { id: 'main' },
-        create: { id: 'main', lastProcessedLedger: ledger },
-        update: { lastProcessedLedger: ledger },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to persist event cursor: ${(err as Error).message}`);
+      try {
+        await this.prisma.eventCursor.update({
+          where: { id: 'main' },
+          data: { lastProcessedLedger: this.lastProcessedLedger },
+        });
+        this.logger.debug(`Cursor persisted at ledger ${this.lastProcessedLedger}`);
+      } catch (err) {
+        this.logger.warn(`Cursor DB write failed (in-memory value still correct): ${(err as Error).message}`);
+      }
+    } catch (error) {
+      this.logger.error('Event polling failed', (error as Error).message);
     }
   }
 
