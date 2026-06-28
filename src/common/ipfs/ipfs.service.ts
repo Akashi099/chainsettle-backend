@@ -108,4 +108,36 @@ export class IpfsService {
   getGatewayUrl(cid: string): string {
     return `${this.gateway}/${cid}`;
   }
+
+  /**
+   * Fetches a file from IPFS by CID and returns its buffer.
+   *
+   * @param cid - IPFS CID of the file
+   * @returns File buffer
+   * @throws InternalServerErrorException on fetch failure
+   */
+  async getFile(cid: string): Promise<Buffer> {
+    if (!this.apiKey) {
+      this.logger.warn(
+        'IPFS_API_KEY not configured — returning empty buffer for development',
+      );
+      return Buffer.alloc(0);
+    }
+
+    try {
+      const response = await axios.get(`${this.gateway}/${cid}`, {
+        responseType: 'arraybuffer',
+        timeout: 60_000,
+      });
+
+      this.logger.log(`File fetched from IPFS: ${cid}`);
+      return Buffer.from(response.data);
+    } catch (error) {
+      const detail = error.response?.data?.error?.details ?? error.message;
+      this.logger.error(`Failed to fetch file from IPFS`, detail);
+      throw new InternalServerErrorException(
+        `IPFS fetch failed: ${detail}`,
+      );
+    }
+  }
 }

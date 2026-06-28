@@ -15,8 +15,8 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
-// Add the import for your custom validator
 import { IsMilestoneSumValid } from '../../../common/validators/milestone-sum.validator';
+import { IsStellarAddress } from '../../../common/decorators/is-stellar-address.decorator';
 
 export class MilestoneDto {
   @ApiProperty({ example: 'Goods Dispatched' })
@@ -48,23 +48,23 @@ export class CreateShipmentDto {
   templateId?: string;
 
   @ApiProperty({ example: 'GABC...buyer' })
-  @IsString()
+  @IsStellarAddress()
   @IsNotEmpty()
   buyerAddress: string;
 
   @ApiProperty({ example: 'GABC...supplier', required: false })
   @IsOptional()
-  @IsString()
+  @IsStellarAddress()
   supplierAddress?: string;
 
   @ApiProperty({ example: 'GABC...logistics', required: false })
   @IsOptional()
-  @IsString()
+  @IsStellarAddress()
   logisticsAddress?: string;
 
   @ApiProperty({ example: 'GABC...arbiter', required: false })
   @IsOptional()
-  @IsString()
+  @IsStellarAddress()
   arbiterAddress?: string;
 
   @ApiProperty({ example: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA', required: false })

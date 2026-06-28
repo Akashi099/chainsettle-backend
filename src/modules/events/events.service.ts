@@ -6,6 +6,7 @@ import { StellarService } from '../../common/stellar/stellar.service';
 import { MilestonesService } from '../milestones/milestones.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ShipmentsService } from '../shipments/shipments.service';
+import { MetricsService } from '../../common/metrics/metrics.service';
 import { NotificationType } from '@prisma/client';
 
 const MAX_ATTEMPTS = 5;
@@ -36,6 +37,7 @@ export class EventsService implements OnModuleInit {
     private readonly notifications: NotificationsService,
     private readonly shipments: ShipmentsService,
     private readonly config: ConfigService,
+    private readonly metrics: MetricsService,
   ) {}
 
   async onModuleInit() {
@@ -95,6 +97,7 @@ export class EventsService implements OnModuleInit {
         try {
           await this.processEvent(event);
         } catch (error) {
+          this.metrics.incrementEventsFailed();
           await this.saveToDlq(event, error as Error);
         }
         this.lastProcessedLedger = Math.max(this.lastProcessedLedger, event.ledger + 1);
@@ -170,6 +173,7 @@ export class EventsService implements OnModuleInit {
 
     await this.saveRawEvent(eventName, event, payload);
     await this.executeHandler(eventName, payload, event);
+    this.metrics.incrementEventsProcessed(eventName);
   }
 
   private async executeHandler(eventName: string, payload: any, meta: any) {
@@ -236,6 +240,24 @@ export class EventsService implements OnModuleInit {
     const [shipmentId, milestoneIndex, paymentAmount] = Array.isArray(payload)
       ? payload
       : [payload, 0, 0];
+
+    // The buyer may have already registered this confirmation via
+    // POST /shipments/:id/milestones/:index/confirm — skip to avoid
+    // double-notifying the supplier once the on-chain event arrives.
+    const existing = await this.prisma.milestone.findUnique({
+      where: {
+        shipmentId_milestoneIndex: {
+          shipmentId: String(shipmentId),
+          milestoneIndex: Number(milestoneIndex),
+        },
+      },
+    });
+    if (existing?.status === 'CONFIRMED') {
+      this.logger.debug(
+        `Milestone ${shipmentId}[${milestoneIndex}] already confirmed — skipping duplicate event`,
+      );
+      return;
+    }
 
     this.logger.log(
       `Milestone confirmed: ${shipmentId}[${milestoneIndex}] — ${paymentAmount} released`,
@@ -488,6 +510,25 @@ export class EventsService implements OnModuleInit {
         limit,
         totalPages: Math.ceil(total / limit)
       } 
+    };
+  }
+
+  /**
+   * Admin diagnostics: compares the in-memory cursor against the
+   * DB-persisted one and the live chain tip to surface poller lag.
+   */
+  async getCursorStatus() {
+    const persisted = await this.prisma.eventCursor.findUnique({ where: { id: 'main' } });
+    const chainTip = await this.stellar.getLatestLedger();
+    const lag = chainTip - this.lastProcessedLedger;
+
+    return {
+      inMemoryLedger: this.lastProcessedLedger,
+      persistedLedger: persisted?.lastProcessedLedger ?? null,
+      chainTip,
+      lag,
+      updatedAt: persisted?.updatedAt ?? null,
+      healthy: lag <= 100,
     };
   }
 
