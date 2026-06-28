@@ -4,12 +4,16 @@ import {
   Logger,
   ConflictException,
   ForbiddenException,
-  BadRequestException, // <-- Added this import
+  BadRequestException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { createHash } from 'crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StellarService } from '../../common/stellar/stellar.service';
 import { TokenRegistryService } from '../../common/token-registry/token-registry.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RedisService } from '../../common/redis/redis.service';
+import { MetricsService } from '../../common/metrics/metrics.service';
 import { CreateShipmentDto, CloneShipmentDto } from './dto/create-shipment.dto';
 import { CreateTrackingDto } from './dto/tracking.dto';
 import { ShipmentStatus, NotificationType, ArbiterStatus } from '@prisma/client';
@@ -19,13 +23,19 @@ import { randomUUID } from 'crypto';
 @Injectable()
 export class ShipmentsService {
   private readonly logger = new Logger(ShipmentsService.name);
+  private readonly cacheTtl: number;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly stellar: StellarService,
     private readonly tokenRegistry: TokenRegistryService,
     private readonly notifications: NotificationsService,
-  ) {}
+    private readonly redis: RedisService,
+    private readonly config: ConfigService,
+    private readonly metrics: MetricsService,
+  ) {
+    this.cacheTtl = this.config.get<number>('SHIPMENTS_CACHE_TTL_SECONDS', 30);
+  }
 
   // ----------------------------------------------------------
   // CREATE — persist after tx is confirmed on-chain
@@ -146,6 +156,9 @@ export class ShipmentsService {
     );
 
     this.logger.log(`Shipment created: ${shipment.id} — arbiter ${dto.arbiterAddress} notified`);
+    this.metrics.incrementShipmentsCreated();
+    this.metrics.incrementActiveShipments();
+    await this.invalidateUserCache(dto.buyerAddress);
     return this.serialize(shipment);
   }
 
@@ -376,6 +389,7 @@ export class ShipmentsService {
     });
 
     this.logger.log(`Shipment updated: ${id}`);
+    await this.invalidateUserCache(buyerAddress);
     return this.serialize(updated);
   }
 
@@ -460,6 +474,32 @@ export class ShipmentsService {
     );
 
     this.logger.log(`Arbiter ${callerAddress} declined assignment for shipment ${id}`);
+    return this.serialize(updated);
+  }
+
+  // ----------------------------------------------------------
+  // CANCEL — buyer registers on-chain cancellation
+  // ----------------------------------------------------------
+
+  async cancel(id: string, buyerAddress: string, txHash: string) {
+    const shipment = await this.prisma.shipment.findUnique({ where: { id } });
+    if (!shipment) throw new NotFoundException(`Shipment ${id} not found`);
+    if (shipment.buyerAddress !== buyerAddress) {
+      throw new ForbiddenException('Only the shipment buyer can cancel it');
+    }
+    if (shipment.status !== ShipmentStatus.ACTIVE) {
+      throw new ConflictException(`Shipment is not ACTIVE (current status: ${shipment.status})`);
+    }
+
+    const updated = await this.prisma.shipment.update({
+      where: { id },
+      data: { status: ShipmentStatus.CANCELLED, txHash },
+      include: { milestones: { orderBy: { milestoneIndex: 'asc' } } },
+    });
+
+    this.logger.log(`Shipment ${id} cancelled by buyer ${buyerAddress}`);
+    this.metrics.decrementActiveShipments();
+    await this.invalidateUserCache(buyerAddress);
     return this.serialize(updated);
   }
 
@@ -908,6 +948,18 @@ export class ShipmentsService {
   // ----------------------------------------------------------
   // INTERNAL HELPERS
   // ----------------------------------------------------------
+
+  private buildCacheKey(callerStellarAddress: string, filters: Record<string, any>): string {
+    const hash = createHash('sha256')
+      .update(JSON.stringify(filters))
+      .digest('hex')
+      .slice(0, 16);
+    return `shipments:${callerStellarAddress}:${hash}`;
+  }
+
+  private async invalidateUserCache(callerStellarAddress: string): Promise<void> {
+    await this.redis.delByPrefix(`shipments:${callerStellarAddress}:`);
+  }
 
   private serialize(shipment: any) {
     const now = new Date();

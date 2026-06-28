@@ -1,8 +1,9 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsISO8601, IsOptional, IsString } from 'class-validator';
+import { IsISO8601, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ShipmentStatus } from '@prisma/client';
 
 export class FindAllShipmentsDto {
-  // Retain your existing query properties here (e.g., buyerAddress, supplierAddress, status)
   @ApiPropertyOptional({ description: 'Filter by buyer wallet address' })
   @IsOptional()
   @IsString()
@@ -13,10 +14,34 @@ export class FindAllShipmentsDto {
   @IsString()
   supplierAddress?: string;
 
-  @ApiPropertyOptional({ description: 'Filter by shipment status' })
+  @ApiPropertyOptional({ description: 'Filter by shipment status', enum: ShipmentStatus })
   @IsOptional()
   @IsString()
-  status?: string;
+  status?: ShipmentStatus;
+
+  @ApiPropertyOptional({ description: 'Filter by reference number' })
+  @IsOptional()
+  @IsString()
+  referenceNumber?: string;
+
+  @ApiPropertyOptional({ description: 'Comma-separated list of tags to filter by' })
+  @IsOptional()
+  @IsString()
+  tags?: string;
+
+  @ApiPropertyOptional({ description: 'Page number (1-based)', default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @ApiPropertyOptional({ description: 'Results per page', default: 20 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  limit?: number;
 
   @ApiPropertyOptional({ description: 'Search in description (full-text search)' })
   @IsOptional()
