@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe, Logger, RequestMethod } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
@@ -70,8 +70,11 @@ async function bootstrap() {
     credentials: true,
   });
 
-  // Global prefix for all routes
-  app.setGlobalPrefix(apiPrefix);
+
+  // Global prefix for all routes — /metrics is excluded so Prometheus can scrape it without the prefix
+  app.setGlobalPrefix(apiPrefix, {
+    exclude: [{ path: 'metrics', method: RequestMethod.GET }],
+  });
 
   // Global validation pipe
   app.useGlobalPipes(

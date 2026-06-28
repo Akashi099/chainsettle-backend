@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Param,
+  Body,
   ParseIntPipe,
   UseGuards,
   UseInterceptors,
@@ -10,6 +11,8 @@ import {
   BadRequestException,
   HttpCode,
   HttpStatus,
+  Res,
+  NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -21,9 +24,12 @@ import {
   ApiResponse,
 } from '@nestjs/swagger';
 import { memoryStorage } from 'multer';
+import { Response } from 'express';
 import { MilestonesService } from './milestones.service';
+import { ConfirmMilestoneDto } from './dto/confirm-milestone.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ShipmentParticipantGuard } from '../shipments/guards/shipment-participant.guard';
 
 /** Maximum allowed proof file size: 50 MB */
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -153,5 +159,31 @@ export class MilestonesController {
       callerAddress,
       file,
     );
+  }
+
+  /**
+   * GET /api/v1/shipments/:shipmentId/milestones/:index/evidence/:evidenceId/download
+   * Download a dispute evidence file through the backend proxy.
+   */
+  @Get(':index/evidence/:evidenceId/download')
+  @UseGuards(ShipmentParticipantGuard)
+  @ApiOperation({ summary: 'Download dispute evidence file' })
+  @ApiResponse({ status: 200, description: 'File streamed' })
+  @ApiResponse({ status: 403, description: 'Not a shipment participant' })
+  @ApiResponse({ status: 404, description: 'Evidence not found or no file attached' })
+  async downloadEvidence(
+    @Param('shipmentId') shipmentId: string,
+    @Param('index', ParseIntPipe) index: number,
+    @Param('evidenceId') evidenceId: string,
+    @Res() res: Response,
+  ) {
+    const { fileBuffer, fileName, mimeType } = await this.milestonesService.downloadEvidence(
+      shipmentId,
+      index,
+      evidenceId,
+    );
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.end(fileBuffer);
   }
 }
